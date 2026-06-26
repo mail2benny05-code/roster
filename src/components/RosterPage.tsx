@@ -54,7 +54,9 @@ export default function RosterPage({
     link.click();
   }
 
-  const formatLabel = data.rosterType === 'mixed' ? 'Mixed' : 'Gender-based';
+  const formatLabel = data.rosterType === 'mixed'
+    ? data.allowSameGender ? 'Mixed (flexible)' : 'Mixed'
+    : 'Gender-based';
   const hasSitOuts = data.rounds.some(r => r.sittingOut.length > 0);
 
   return (
@@ -189,7 +191,10 @@ export default function RosterPage({
         {hasSitOuts && <p>Players listed in the <strong className="text-slate-300">Sit Out</strong> column are not playing that round.</p>}
         {data.rosterType === 'mixed' && (
           <p>
-            Gender indicators: <span className="text-blue-400">♂</span> male · <span className="text-pink-400">♀</span> female. Each pair is always 1 male + 1 female.
+            Gender indicators: <span className="text-blue-400">♂</span> male · <span className="text-pink-400">♀</span> female.{' '}
+            {data.allowSameGender
+              ? 'Same-gender pairings (♂♂ or ♀♀) are allowed in this schedule.'
+              : 'Each pair is always 1 male + 1 female.'}
           </p>
         )}
       </div>

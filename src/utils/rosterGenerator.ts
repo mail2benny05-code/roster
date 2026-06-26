@@ -195,6 +195,7 @@ function scoreAssignment(
   sittingOut: Player[],
   history: GlobalHistory,
   allPlayers: Player[],
+  prevSittingOut: Player[],
 ): number {
   let score = 0;
 
@@ -227,8 +228,6 @@ function scoreAssignment(
   // Sit-out rotation fairness penalty:
   // Heavily penalise picking a player to sit out who has already sat out
   // more times than the current minimum across ALL players.
-  // This guides the engine to rotate sit-outs evenly across every cycle,
-  // not just the first one.
   if (sittingOut.length > 0) {
     const minSitOutCount = Math.min(
       ...allPlayers.map(p => history.sitOutCount.get(p.id) ?? 0),
@@ -237,6 +236,18 @@ function scoreAssignment(
       const excess = (history.sitOutCount.get(p.id) ?? 0) - minSitOutCount;
       if (excess > 0) {
         score -= excess * 10000;
+      }
+    }
+  }
+
+  // Consecutive sit-out penalty: very strongly penalise any player who sat out
+  // last round sitting out again. This steers lower-priority fallback buckets
+  // away from consecutive sit-outs even before the hard constraint is applied.
+  if (sittingOut.length > 0 && prevSittingOut.length > 0) {
+    const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
+    for (const p of sittingOut) {
+      if (prevSitOutIds.has(p.id)) {
+        score -= 50000;
       }
     }
   }
@@ -262,6 +273,7 @@ function isSitOutUnfair(
   allPlayers: Player[],
   history: GlobalHistory,
   isMixed: boolean,
+  allowSameGender: boolean,
 ): boolean {
   // A player is only eligible to sit out if their sit-out count equals the
   // current minimum across their pool. This enforces fairness across ALL
@@ -269,8 +281,8 @@ function isSitOutUnfair(
   // everyone else has sat out once, three times before everyone has sat out
   // twice, and so on.
 
-  if (isMixed) {
-    // In mixed mode, males and females have independent sit-out pools.
+  if (isMixed && !allowSameGender) {
+    // Strict mixed: males and females have independent sit-out pools.
     for (const gender of ['male', 'female'] as const) {
       const genderSittingOut = sittingOut.filter(p => p.gender === gender);
       if (genderSittingOut.length === 0) continue;
@@ -288,7 +300,7 @@ function isSitOutUnfair(
     return false;
   }
 
-  // Gender mode: all players share one sit-out pool.
+  // Gender-based mode OR flexible mixed (allowSameGender=true): single combined pool.
   const minSitOut = Math.min(
     ...allPlayers.map(p => history.sitOutCount.get(p.id) ?? 0),
   );
@@ -413,6 +425,7 @@ function generateOneRound(
   numCourts: number,
   history: GlobalHistory,
   isMixed: boolean,
+  allowSameGender: boolean,
   prevSittingOut: Player[],
   prevRoundPairIds: Set<string>,
 ): RoundResult {
@@ -426,7 +439,8 @@ function generateOneRound(
     const courts: CourtGame[] = [];
     let sittingOut: Player[];
 
-    if (isMixed) {
+    if (isMixed && !allowSameGender) {
+      // Strict mixed: separate M/F pools, every pair must be 1M + 1F.
       const males = players.filter(p => p.gender === 'male');
       const females = players.filter(p => p.gender === 'female');
       const shuffledMales = weightedShuffle(males, history);
@@ -450,6 +464,9 @@ function generateOneRound(
         courts.push({ courtNumber: c + 1, team1, team2 });
       }
     } else {
+      // Gender-based mode OR flexible mixed (allowSameGender=true):
+      // single combined pool, any pairing allowed. Players still carry their
+      // gender attribute so the table can display ♂/♀ indicators.
       const shuffled = weightedShuffle(players, history);
       const playing = shuffled.slice(0, numCourts * 4);
       sittingOut = shuffled.slice(numCourts * 4);
@@ -461,41 +478,53 @@ function generateOneRound(
       }
     }
 
-    const score = scoreAssignment(courts, sittingOut, history, allPlayers);
+    const score = scoreAssignment(courts, sittingOut, history, allPlayers, prevSittingOut);
 
     // Bucket 0: always store fallback
     if (!buckets[0] || score > buckets[0].score) {
       buckets[0] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 1: no consecutive pair
-    if (isConsecutivePair(courts, prevRoundPairIds)) continue;
+    // Bucket 1: sit-out is fair.
+    // *** Checked FIRST among hard constraints ***
+    // Pair-diversity checks (buckets 2 & 3) must never be allowed to cascade
+    // and block fairness. Example: with 5 players (3M+2F), 1 court, after 3
+    // rounds where only males have sat out, every possible playing group for
+    // the remaining fair candidates (F1 or F2 sitting out) triggers a premature
+    // pair repeat — because F1/F2 have now played with everyone. If fairness
+    // were downstream of pair diversity, bucket 3 would always be empty and we
+    // would fall back to bucket 2 with an unfair (male) sit-out.
+    if (isSitOutUnfair(sittingOut, allPlayers, history, isMixed, allowSameGender)) continue;
     if (!buckets[1] || score > buckets[1].score) {
       buckets[1] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 2: also no premature pair repeat
-    if (isPrematurePairRepeat(courts, allPlayers, history)) continue;
+    // Bucket 2: also no consecutive pair
+    if (isConsecutivePair(courts, prevRoundPairIds)) continue;
     if (!buckets[2] || score > buckets[2].score) {
       buckets[2] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 3: also sit-out is fair
-    if (isSitOutUnfair(sittingOut, allPlayers, history, isMixed)) continue;
+    // Bucket 3: also no premature pair repeat
+    if (isPrematurePairRepeat(courts, allPlayers, history)) continue;
     if (!buckets[3] || score > buckets[3].score) {
       buckets[3] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 4: also no premature sit-out repeat
-    if (isPrematureSitOutRepeat(sittingOut, allPlayers, history)) continue;
+    // Bucket 4: also no consecutive sit-out (no player sits out twice in a row).
+    // Checked BEFORE premature-sit-out-repeat: in certain combinations (e.g.
+    // 12 players, 2 courts) it becomes mathematically impossible to avoid a
+    // sit-out pair repeat after the first cycle, which would otherwise
+    // permanently block this bucket and leave consecutive sit-outs unguarded.
+    const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
+    const hasConsecutiveSitOut = sittingOut.some(p => prevSitOutIds.has(p.id));
+    if (hasConsecutiveSitOut) continue;
     if (!buckets[4] || score > buckets[4].score) {
       buckets[4] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 5: also no consecutive sit-out (no player sits out twice in a row)
-    const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
-    const hasConsecutiveSitOut = sittingOut.some(p => prevSitOutIds.has(p.id));
-    if (hasConsecutiveSitOut) continue;
+    // Bucket 5: also no premature sit-out repeat (nice-to-have on top of above)
+    if (isPrematureSitOutRepeat(sittingOut, allPlayers, history)) continue;
     if (!buckets[5] || score > buckets[5].score) {
       buckets[5] = { result: { courts, sittingOut }, score };
     }
@@ -516,21 +545,32 @@ export function validateSetup(
   players: Player[],
   numCourts: number,
   rosterType: RosterType,
+  allowSameGender = false,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   if (rosterType === 'mixed') {
-    const males = players.filter(p => p.gender === 'male').length;
-    const females = players.filter(p => p.gender === 'female').length;
-    if (males < numCourts * 2) {
-      errors.push(
-        `Need at least ${numCourts * 2} male players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${males}).`,
-      );
-    }
-    if (females < numCourts * 2) {
-      errors.push(
-        `Need at least ${numCourts * 2} female players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${females}).`,
-      );
+    if (allowSameGender) {
+      // Flexible mixed: only requires enough total players (same as gender-based).
+      if (players.length < numCourts * 4) {
+        errors.push(
+          `Need at least ${numCourts * 4} players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${players.length}).`,
+        );
+      }
+    } else {
+      // Strict mixed: need at least numCourts * 2 of each gender.
+      const males = players.filter(p => p.gender === 'male').length;
+      const females = players.filter(p => p.gender === 'female').length;
+      if (males < numCourts * 2) {
+        errors.push(
+          `Need at least ${numCourts * 2} male players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${males}).`,
+        );
+      }
+      if (females < numCourts * 2) {
+        errors.push(
+          `Need at least ${numCourts * 2} female players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${females}).`,
+        );
+      }
     }
   } else {
     if (players.length < numCourts * 4) {
@@ -551,6 +591,7 @@ export function generateRoster(
   numRounds: number,
   rosterType: RosterType,
   sessionName: string,
+  allowSameGender = false,
 ): RosterData {
   const history = makeHistory(players);
   const isMixed = rosterType === 'mixed';
@@ -564,6 +605,7 @@ export function generateRoster(
       numCourts,
       history,
       isMixed,
+      allowSameGender,
       prevSittingOut,
       prevRoundPairIds,
     );
@@ -584,5 +626,5 @@ export function generateRoster(
     }
   }
 
-  return { rounds, rosterType, allPlayers: players, numCourts, sessionName };
+  return { rounds, rosterType, allPlayers: players, numCourts, sessionName, allowSameGender };
 }

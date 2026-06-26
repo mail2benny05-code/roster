@@ -44,6 +44,7 @@ export default function App() {
       state.numRounds,
       state.rosterType,
       state.sessionName,
+      state.allowSameGender ?? false,
     );
     setRosterData(data);
     setPage('roster');

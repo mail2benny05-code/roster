@@ -26,6 +26,7 @@ export interface RosterData {
   allPlayers: Player[];
   numCourts: number;
   sessionName: string;
+  allowSameGender: boolean;
 }
 
 export interface SetupState {
@@ -34,5 +35,6 @@ export interface SetupState {
   numRounds: number;
   players: Player[];
   sessionName: string;
+  allowSameGender?: boolean;
 }
 

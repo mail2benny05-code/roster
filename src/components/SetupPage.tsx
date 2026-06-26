@@ -235,7 +235,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset 
           </div>
 
           {/* Add player */}
-          <div className="flex gap-2 mb-3">
+          <div className="flex flex-col gap-2 mb-3 sm:flex-row">
             <input
               ref={nameInputRef}
               type="text"
@@ -243,24 +243,26 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset 
               onChange={e => { setNewName(e.target.value); setNameError(null); }}
               onKeyDown={e => e.key === 'Enter' && addPlayer()}
               placeholder="Player name"
-              className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
+              className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
             />
-            {rosterType === 'mixed' && (
-              <select
-                value={newGender}
-                onChange={e => setNewGender(e.target.value as Gender)}
-                className="bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500"
+            <div className="flex gap-2">
+              {rosterType === 'mixed' && (
+                <select
+                  value={newGender}
+                  onChange={e => setNewGender(e.target.value as Gender)}
+                  className="flex-1 sm:flex-none bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-violet-500"
+                >
+                  <option value="male">♂ Male</option>
+                  <option value="female">♀ Female</option>
+                </select>
+              )}
+              <button
+                onClick={addPlayer}
+                className="flex-none bg-violet-600 hover:bg-violet-500 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
               >
-                <option value="male">♂ Male</option>
-                <option value="female">♀ Female</option>
-              </select>
-            )}
-            <button
-              onClick={addPlayer}
-              className="bg-violet-600 hover:bg-violet-500 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
-            >
-              Add
-            </button>
+                Add
+              </button>
+            </div>
           </div>
 
           {nameError && (

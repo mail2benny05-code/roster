@@ -6,7 +6,9 @@ import App from './App.tsx'
 
 // Skip Identity widget when using Cloudflare Access auth
 if (import.meta.env.VITE_AUTH_PROVIDER !== 'cloudflare') {
-  netlifyIdentity.init()
+  netlifyIdentity.init({
+    APIUrl: import.meta.env.VITE_NETLIFY_IDENTITY_URL || undefined,
+  })
 }
 
 createRoot(document.getElementById('root')!).render(

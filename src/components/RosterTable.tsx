@@ -115,7 +115,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
         </colgroup>
         <thead>
           <tr>
-            <th style={{ background: '#1e1b4b', color: '#a78bfa', padding: '8px 6px', fontSize: 11, fontWeight: 700, textAlign: 'center' as const }}>
+            <th style={{ background: '#1e1b4b', color: '#a78bfa', padding: '8px 6px', fontSize: 11, fontWeight: 700, textAlign: 'center' as const, position: 'sticky', left: 0, zIndex: 3 }}>
               Game
             </th>
             {Array.from({ length: numCourts }).map((_, ci) => {
@@ -138,7 +138,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
             const rowBg = ri % 2 === 0 ? '#f8fafc' : '#ffffff';
             return (
               <tr key={round.roundNumber}>
-                <td style={{ background: '#1e1b4b', color: '#e0e7ff', textAlign: 'center' as const, padding: '10px 4px', fontSize: 18, fontWeight: 800, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <td style={{ background: '#1e1b4b', color: '#e0e7ff', textAlign: 'center' as const, padding: '10px 4px', fontSize: 18, fontWeight: 800, borderTop: '1px solid rgba(255,255,255,0.08)', position: 'sticky', left: 0, zIndex: 1 }}>
                   {round.roundNumber}
                 </td>
                 {round.courts.map((court, ci) => {

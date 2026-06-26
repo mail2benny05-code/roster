@@ -20,12 +20,36 @@ export default function RosterPage({
 
   async function handleExport() {
     if (!tableRef.current) return;
-    const dataUrl = await toPng(tableRef.current, {
+    const el = tableRef.current;
+
+    // Capture the full element, not just the visible/clipped portion
+    const dataUrl = await toPng(el, {
       pixelRatio: 2,
-      backgroundColor: '#f1f5f9',
+      backgroundColor: '#ffffff',
+      width: el.scrollWidth,
+      height: el.scrollHeight,
     });
+
+    const filename = `${data.sessionName || 'roster'}.png`;
+
+    // On mobile, use the Web Share API so the user can "Save to Photos"
+    if (typeof navigator.share === 'function') {
+      try {
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const file = new File([blob], filename, { type: 'image/png' });
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], title: data.sessionName || 'Roster' });
+          return;
+        }
+      } catch {
+        // User cancelled or share not supported — fall through to download
+      }
+    }
+
+    // Desktop fallback: trigger a file download
     const link = document.createElement('a');
-    link.download = `${data.sessionName || 'roster'}.png`;
+    link.download = filename;
     link.href = dataUrl;
     link.click();
   }
@@ -141,9 +165,21 @@ export default function RosterPage({
       </div>
 
       {/* Roster table */}
-      <div className="max-w-5xl mx-auto mb-6 overflow-x-auto">
-        <div ref={tableRef}>
-          <RosterTable data={data} />
+      <div className="max-w-5xl mx-auto mb-6">
+        {/* Mobile scroll hint */}
+        <div className="flex items-center gap-1.5 text-slate-500 text-xs mb-2 sm:hidden">
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16l-4-4m0 0l4-4m-4 4h18" />
+          </svg>
+          Scroll left / right to see all courts
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+          </svg>
+        </div>
+        <div className="overflow-x-auto rounded-2xl">
+          <div ref={tableRef}>
+            <RosterTable data={data} />
+          </div>
         </div>
       </div>
 

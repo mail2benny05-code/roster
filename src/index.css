@@ -1,0 +1,9 @@
+@import "tailwindcss";
+:root {
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font: 18px/145% var(--sans);
+  color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
+}
+#root { min-height: 100svh; }
+body { margin: 0; }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import netlifyIdentity from 'netlify-identity-widget';
 import type { Page, RosterData, SetupState } from './types';
 import { generateRoster } from './utils/rosterGenerator';
@@ -15,8 +15,10 @@ const DEFAULT_SETUP: SetupState = {
 };
 
 export default function App() {
+  // Auth disabled: land directly on setup. Set AUTH_ENABLED to true to re-enable the login page.
+  const AUTH_ENABLED = false;
   const [page, setPage] = useState<Page>(
-    import.meta.env.VITE_AUTH_PROVIDER === 'cloudflare' ? 'setup' : 'login',
+    (!AUTH_ENABLED || import.meta.env.VITE_AUTH_PROVIDER === 'cloudflare') ? 'setup' : 'login',
   );
   const [setup, setSetup] = useState<SetupState>(DEFAULT_SETUP);
   const [rosterData, setRosterData] = useState<RosterData | null>(null);
@@ -25,10 +27,24 @@ export default function App() {
     setPage('setup');
   }
 
+  // Listen for Netlify Identity login events (e.g. magic-link return)
+  useEffect(() => {
+    if (!AUTH_ENABLED || import.meta.env.VITE_AUTH_PROVIDER === 'cloudflare') return;
+
+    netlifyIdentity.on('login', () => {
+      netlifyIdentity.close();
+      setPage('setup');
+    });
+
+    return () => {
+      netlifyIdentity.off('login');
+    };
+  }, []);
+
   function handleLogout() {
     if (import.meta.env.VITE_AUTH_PROVIDER === 'cloudflare') {
       window.location.href = '/cdn-cgi/access/logout';
-    } else {
+    } else if (AUTH_ENABLED) {
       netlifyIdentity.logout();
       setPage('login');
       setSetup(DEFAULT_SETUP);

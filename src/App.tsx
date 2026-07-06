@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import netlifyIdentity from 'netlify-identity-widget';
 import type { Page, RosterData, SetupState } from './types';
 import { generateRoster } from './utils/rosterGenerator';
+import { saveToHistory } from './utils/historyDB';
 import LoginPage from './components/LoginPage';
 import SetupPage from './components/SetupPage';
 import RosterPage from './components/RosterPage';
+import HistoryPage from './components/HistoryPage';
 
 const DEFAULT_SETUP: SetupState = {
   rosterType: 'gender',
@@ -64,6 +66,8 @@ export default function App() {
     );
     setRosterData(data);
     setPage('roster');
+    // Persist to history (fire-and-forget — don't block the UI)
+    saveToHistory(state).catch(console.error);
   }
 
   function handleEditSetup() {
@@ -72,6 +76,16 @@ export default function App() {
 
   function handleNewSchedule() {
     setSetup(DEFAULT_SETUP);
+    setRosterData(null);
+    setPage('setup');
+  }
+
+  function handleOpenHistory() {
+    setPage('history');
+  }
+
+  function handleLoadFromHistory(state: SetupState) {
+    setSetup(state);
     setRosterData(null);
     setPage('setup');
   }
@@ -87,6 +101,7 @@ export default function App() {
         onGenerate={handleGenerate}
         onLogout={handleLogout}
         onReset={handleNewSchedule}
+        onHistory={handleOpenHistory}
       />
     );
   }
@@ -98,6 +113,16 @@ export default function App() {
         onEditSetup={handleEditSetup}
         onNewSchedule={handleNewSchedule}
         onLogout={handleLogout}
+        onHistory={handleOpenHistory}
+      />
+    );
+  }
+
+  if (page === 'history') {
+    return (
+      <HistoryPage
+        onBack={() => setPage(rosterData ? 'roster' : 'setup')}
+        onLoad={handleLoadFromHistory}
       />
     );
   }

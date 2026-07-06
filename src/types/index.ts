@@ -1,6 +1,6 @@
 export type Gender = 'male' | 'female';
 export type RosterType = 'gender' | 'mixed';
-export type Page = 'login' | 'setup' | 'roster';
+export type Page = 'login' | 'setup' | 'roster' | 'history';
 
 export interface Player {
   id: string;

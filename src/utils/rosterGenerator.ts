@@ -331,6 +331,8 @@ function isPrematurePairRepeat(
   courts: CourtGame[],
   allPlayers: Player[],
   history: GlobalHistory,
+  isMixed: boolean,
+  allowSameGender: boolean,
 ): boolean {
   for (const court of courts) {
     for (const team of [court.team1, court.team2]) {
@@ -339,22 +341,71 @@ function isPrematurePairRepeat(
           const k = pairKey(team[i].id, team[j].id);
           const count = history.pairCount.get(k) ?? 0;
           if (count > 0) {
-            // Check if both players have someone they've partnered fewer times
+            // Check if both players have someone they've partnered fewer times.
+            // In strict mixed mode only opposite-gender players are valid partners;
+            // using ALL players would make aMin/bMin always 0 (same-gender pairs
+            // never form), causing this check to always return true and emptying
+            // bucket 3 entirely.
             const pA = team[i];
             const pB = team[j];
-            const aMin = Math.min(
-              ...allPlayers
-                .filter(p => p.id !== pA.id)
-                .map(p => history.pairCount.get(pairKey(pA.id, p.id)) ?? 0),
-            );
-            const bMin = Math.min(
-              ...allPlayers
-                .filter(p => p.id !== pB.id)
-                .map(p => history.pairCount.get(pairKey(pB.id, p.id)) ?? 0),
-            );
+
+            const eligibleForA =
+              isMixed && !allowSameGender
+                ? allPlayers.filter(p => p.id !== pA.id && p.gender !== pA.gender)
+                : allPlayers.filter(p => p.id !== pA.id);
+
+            const eligibleForB =
+              isMixed && !allowSameGender
+                ? allPlayers.filter(p => p.id !== pB.id && p.gender !== pB.gender)
+                : allPlayers.filter(p => p.id !== pB.id);
+
+            const aMin =
+              eligibleForA.length === 0
+                ? count
+                : Math.min(...eligibleForA.map(p => history.pairCount.get(pairKey(pA.id, p.id)) ?? 0));
+            const bMin =
+              eligibleForB.length === 0
+                ? count
+                : Math.min(...eligibleForB.map(p => history.pairCount.get(pairKey(pB.id, p.id)) ?? 0));
+
             if (aMin < count && bMin < count) {
               return true;
             }
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isPrematureOpponentRepeat(
+  courts: CourtGame[],
+  allPlayers: Player[],
+  history: GlobalHistory,
+): boolean {
+  for (const court of courts) {
+    for (const p1 of court.team1) {
+      for (const p2 of court.team2) {
+        const k = oppKey(p1.id, p2.id);
+        const count = history.opponentCount.get(k) ?? 0;
+        if (count > 0) {
+          // Check if either player still has an opponent they haven't faced yet
+          // (or faced fewer times). opponentCount is 0 for players who have only
+          // been partners, or who've never shared a court — both are valid
+          // unexplored opponent slots.
+          const aMin = Math.min(
+            ...allPlayers
+              .filter(p => p.id !== p1.id)
+              .map(p => history.opponentCount.get(oppKey(p1.id, p.id)) ?? 0),
+          );
+          const bMin = Math.min(
+            ...allPlayers
+              .filter(p => p.id !== p2.id)
+              .map(p => history.opponentCount.get(oppKey(p2.id, p.id)) ?? 0),
+          );
+          if (aMin < count && bMin < count) {
+            return true;
           }
         }
       }
@@ -430,9 +481,9 @@ function generateOneRound(
   prevRoundPairIds: Set<string>,
 ): RoundResult {
   const allPlayers = players;
-  // 6 priority buckets (0=fallback, 5=ideal)
+  // 7 priority buckets (0=fallback, 6=ideal)
   const buckets: Array<{ result: RoundResult; score: number } | null> = [
-    null, null, null, null, null, null,
+    null, null, null, null, null, null, null,
   ];
 
   for (let attempt = 0; attempt < 1000; attempt++) {
@@ -506,12 +557,20 @@ function generateOneRound(
     }
 
     // Bucket 3: also no premature pair repeat
-    if (isPrematurePairRepeat(courts, allPlayers, history)) continue;
+    if (isPrematurePairRepeat(courts, allPlayers, history, isMixed, allowSameGender)) continue;
     if (!buckets[3] || score > buckets[3].score) {
       buckets[3] = { result: { courts, sittingOut }, score };
     }
 
-    // Bucket 4: also no consecutive sit-out (no player sits out twice in a row).
+    // Bucket 4: also no premature opponent repeat.
+    // Ensures a player does not face the same opponent again while there are
+    // still opponents they haven't played against yet.
+    if (isPrematureOpponentRepeat(courts, allPlayers, history)) continue;
+    if (!buckets[4] || score > buckets[4].score) {
+      buckets[4] = { result: { courts, sittingOut }, score };
+    }
+
+    // Bucket 5: also no consecutive sit-out (no player sits out twice in a row).
     // Checked BEFORE premature-sit-out-repeat: in certain combinations (e.g.
     // 12 players, 2 courts) it becomes mathematically impossible to avoid a
     // sit-out pair repeat after the first cycle, which would otherwise
@@ -519,19 +578,19 @@ function generateOneRound(
     const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
     const hasConsecutiveSitOut = sittingOut.some(p => prevSitOutIds.has(p.id));
     if (hasConsecutiveSitOut) continue;
-    if (!buckets[4] || score > buckets[4].score) {
-      buckets[4] = { result: { courts, sittingOut }, score };
-    }
-
-    // Bucket 5: also no premature sit-out repeat (nice-to-have on top of above)
-    if (isPrematureSitOutRepeat(sittingOut, allPlayers, history)) continue;
     if (!buckets[5] || score > buckets[5].score) {
       buckets[5] = { result: { courts, sittingOut }, score };
+    }
+
+    // Bucket 6: also no premature sit-out repeat (nice-to-have on top of above)
+    if (isPrematureSitOutRepeat(sittingOut, allPlayers, history)) continue;
+    if (!buckets[6] || score > buckets[6].score) {
+      buckets[6] = { result: { courts, sittingOut }, score };
     }
   }
 
   // Return best from highest priority non-null bucket
-  for (let i = 5; i >= 0; i--) {
+  for (let i = 6; i >= 0; i--) {
     if (buckets[i]) return buckets[i]!.result;
   }
 

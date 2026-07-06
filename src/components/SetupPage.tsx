@@ -48,6 +48,7 @@ interface SetupPageProps {
   onGenerate: (state: SetupState) => void;
   onLogout: () => void;
   onReset: () => void;
+  onHistory: () => void;
 }
 
 interface CounterProps {
@@ -91,7 +92,7 @@ function Counter({ label, value, min, max, onChange }: CounterProps) {
   );
 }
 
-export default function SetupPage({ initialState, onGenerate, onLogout, onReset }: SetupPageProps) {
+export default function SetupPage({ initialState, onGenerate, onLogout, onReset, onHistory }: SetupPageProps) {
   const [sessionName, setSessionName] = useState(initialState.sessionName);
   const [rosterType, setRosterType] = useState<RosterType>(initialState.rosterType);
   const [numCourts, setNumCourts] = useState(initialState.numCourts);
@@ -249,6 +250,17 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset 
           <span className="text-white font-bold text-lg">RallyQ</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={onHistory}
+            title="View roster history"
+            className="text-slate-400 hover:text-violet-400 text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700/50 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+                d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            History
+          </button>
           <button
             onClick={handleReset}
             title="Reset everything and start fresh"

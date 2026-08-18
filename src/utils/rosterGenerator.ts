@@ -177,10 +177,82 @@ function hungarian(cost: number[][]): number[] {
   return rowMatch;
 }
 
+// ─── Generic optimal min-cost perfect matching (bitmask DP) ───────────────────
+
 /**
- * Optimal min-cost perfect matching on a single pool of an even number of
- * players, via DP over a bitmask of unmatched players. Exact for pools up to
- * 16; greedy fallback above that so it never fails.
+ * Optimal min-cost perfect matching over an even number of nodes.
+ * `cost[i][j]` is the cost of matching node i with node j.
+ * Returns a list of [i, j] matched index pairs.
+ *
+ * Exact via bitmask DP for up to 16 nodes; greedy fallback above that so it
+ * never fails. Used for BOTH player-partner matching and pair-vs-pair court
+ * matching (where each "node" is a partnered pair).
+ */
+function minCostMatchingIndices(cost: number[][]): [number, number][] {
+  const n = cost.length;
+  if (n === 0) return [];
+
+  if (n <= 16) {
+    const full = (1 << n) - 1;
+    const dp = new Float64Array(1 << n).fill(Infinity);
+    const choice = new Int32Array(1 << n).fill(-1); // encodes (i<<8 | j)
+    dp[0] = 0;
+    for (let mask = 0; mask <= full; mask++) {
+      if (dp[mask] === Infinity) continue;
+      let i = -1;
+      for (let k = 0; k < n; k++) {
+        if (!(mask & (1 << k))) { i = k; break; }
+      }
+      if (i === -1) continue;
+      for (let j = i + 1; j < n; j++) {
+        if (mask & (1 << j)) continue;
+        const nextMask = mask | (1 << i) | (1 << j);
+        const cand = dp[mask] + cost[i][j];
+        if (cand < dp[nextMask]) {
+          dp[nextMask] = cand;
+          choice[nextMask] = (i << 8) | j;
+        }
+      }
+    }
+
+    const matches: [number, number][] = [];
+    let mask = full;
+    while (mask > 0) {
+      const enc = choice[mask];
+      if (enc < 0) break;
+      const i = enc >> 8;
+      const j = enc & 0xff;
+      matches.push([i, j]);
+      mask &= ~((1 << i) | (1 << j));
+    }
+    return matches;
+  }
+
+  // Greedy fallback for very large node counts.
+  const remaining = Array.from({ length: n }, (_, i) => i);
+  const matches: [number, number][] = [];
+  while (remaining.length >= 2) {
+    let bestX = 0, bestY = 1, bestCost = Infinity;
+    for (let x = 0; x < remaining.length; x++) {
+      for (let y = x + 1; y < remaining.length; y++) {
+        const c = cost[remaining[x]][remaining[y]];
+        if (c < bestCost) {
+          bestCost = c;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+    matches.push([remaining[bestX], remaining[bestY]]);
+    remaining.splice(bestY, 1);
+    remaining.splice(bestX, 1);
+  }
+  return matches;
+}
+
+/**
+ * Optimal min-cost partner matching on a single pool of an even number of
+ * players.
  */
 function optimalGeneralMatching(
   players: Player[],
@@ -199,66 +271,8 @@ function optimalGeneralMatching(
     }
   }
 
-  if (n <= 16) {
-    const full = (1 << n) - 1;
-    const dp = new Float64Array(1 << n).fill(Infinity);
-    const choice = new Int32Array(1 << n).fill(-1); // encodes (i<<8 | j)
-    dp[0] = 0;
-    for (let mask = 0; mask <= full; mask++) {
-      if (dp[mask] === Infinity) continue;
-      let i = -1;
-      for (let k = 0; k < n; k++) {
-        if (!(mask & (1 << k))) { i = k; break; }
-      }
-      if (i === -1) continue;
-      for (let j = i + 1; j < n; j++) {
-        if (mask & (1 << j)) continue;
-        const nextMask = mask | (1 << i) | (1 << j);
-        const cand = dp[mask] + c[i][j];
-        if (cand < dp[nextMask]) {
-          dp[nextMask] = cand;
-          choice[nextMask] = (i << 8) | j;
-        }
-      }
-    }
-
-    const pairs: [Player, Player][] = [];
-    let mask = full;
-    while (mask > 0) {
-      const enc = choice[mask];
-      if (enc < 0) break;
-      const i = enc >> 8;
-      const j = enc & 0xff;
-      pairs.push([players[i], players[j]]);
-      mask &= ~((1 << i) | (1 << j));
-    }
-    return pairs;
-  }
-
-  return greedyGeneralMatching(players, c);
-}
-
-/** Greedy fallback: repeatedly take the globally cheapest available pair. */
-function greedyGeneralMatching(players: Player[], c: number[][]): [Player, Player][] {
-  const remaining = players.map((_, i) => i);
-  const pairs: [Player, Player][] = [];
-  while (remaining.length >= 2) {
-    let bestI = 0, bestJ = 1, bestCost = Infinity;
-    for (let x = 0; x < remaining.length; x++) {
-      for (let y = x + 1; y < remaining.length; y++) {
-        const cost = c[remaining[x]][remaining[y]];
-        if (cost < bestCost) {
-          bestCost = cost;
-          bestI = x;
-          bestJ = y;
-        }
-      }
-    }
-    pairs.push([players[remaining[bestI]], players[remaining[bestJ]]]);
-    remaining.splice(bestJ, 1);
-    remaining.splice(bestI, 1);
-  }
-  return pairs;
+  const matches = minCostMatchingIndices(c);
+  return matches.map(([i, j]) => [players[i], players[j]] as [Player, Player]);
 }
 
 // ─── Pairing dispatch ─────────────────────────────────────────────────────────
@@ -303,61 +317,48 @@ function formPairs(
 // ─── Court / opponent assignment ───────────────────────────────────────────
 
 /**
- * Opponent cost between two teams facing each other. Every cross-team pairing
+ * Opponent cost between two pairs facing each other. Every cross-pair pairing
  * of players is an opponent interaction. Repeats are penalised progressively
  * and same-round-previous opponents (back-to-back) are heavily penalised.
  *
  * Because in strict mixed the two males on a court always oppose each other and
  * the two females always oppose each other, this same function naturally
- * spreads same-gender opponents when we evaluate every team split.
+ * spreads same-gender opponents when the global optimiser evaluates every
+ * possible pairing of pairs into courts.
  */
 function matchupCost(
-  team1: Player[],
-  team2: Player[],
+  pairA: [Player, Player],
+  pairB: [Player, Player],
   history: History,
   prevOppIds: Set<string>,
 ): number {
   let cost = 0;
-  for (const a of team1) {
-    for (const b of team2) {
+  for (const a of pairA) {
+    for (const b of pairB) {
       const key = oppKey(a.id, b.id);
       const count = get(history.opponentCount, key);
-      // Squared so repeats are progressively worse; new opponents cost 0.
-      cost += count * count * 1_000;
-      if (prevOppIds.has(key)) cost += 1_000_000; // back-to-back opponent
+      // Repeat count dominates; squared so repeats get progressively worse.
+      cost += count * count * 1_000_000;
+      if (prevOppIds.has(key)) cost += 100_000_000; // back-to-back opponent
     }
   }
   return cost;
 }
 
 /**
- * Given two pairs assigned to the same court, choose how to arrange them into
- * Team 1 vs Team 2 so that opponent fairness is best.
- *
- * The two players in each pair are fixed partners, so there is really only one
- * meaningful "matchup": pairA vs pairB. But we still evaluate the opponent cost
- * (which counts every cross pairing) and keep the pairs intact.
- */
-function bestCourtArrangement(
-  pairA: [Player, Player],
-  pairB: [Player, Player],
-  history: History,
-  prevOppIds: Set<string>,
-): { team1: Player[]; team2: Player[]; cost: number } {
-  const team1 = [pairA[0], pairA[1]];
-  const team2 = [pairB[0], pairB[1]];
-  const cost = matchupCost(team1, team2, history, prevOppIds);
-  return { team1, team2, cost };
-}
-
-/**
  * Assign pairs to courts minimising repeat / back-to-back opponents.
  *
- * Strategy: repeatedly take an anchor pair and find the opposing pair that
- * yields the lowest opponent cost (including same-gender opponents in strict
- * mixed, since those are simply cross-team pairings). This directly fixes the
- * "males meet the same male twice before meeting everyone" and back-to-back
- * opponent problems.
+ * This is a GLOBAL optimisation: we build a cost matrix over the pairs (each
+ * pair is a node) where cost[i][j] is the opponent cost of pair i facing pair j
+ * on a court, then find the min-cost perfect matching of pairs into courts.
+ *
+ * Global matching (rather than greedy court-by-court) is what prevents the
+ * "premature opponent" problem: greedy lets the first courts grab all the
+ * fresh matchups, forcing later courts into early repeats. The optimiser
+ * spreads fresh matchups evenly across every court.
+ *
+ * If there are more pairs than courts (some pairs would have no court), we only
+ * keep the cheapest `numCourts` matched games.
  */
 function assignCourts(
   pairs: [Player, Player][],
@@ -365,28 +366,43 @@ function assignCourts(
   history: History,
   prevOppIds: Set<string>,
 ): CourtGame[] {
-  const remaining = shuffle(pairs);
+  const nPairs = pairs.length;
+  if (nPairs < 2) return [];
+
+  // Build the pair-vs-pair opponent cost matrix.
+  const cost: number[][] = Array.from({ length: nPairs }, () =>
+    new Array(nPairs).fill(0),
+  );
+  for (let i = 0; i < nPairs; i++) {
+    for (let j = i + 1; j < nPairs; j++) {
+      const c = matchupCost(pairs[i], pairs[j], history, prevOppIds);
+      cost[i][j] = c;
+      cost[j][i] = c;
+    }
+  }
+
+  const matches = minCostMatchingIndices(cost);
+
+  // Order games by cost so, if we have to drop some (more pairs than courts),
+  // we keep the fairest matchups.
+  const games = matches
+    .map(([i, j]) => ({
+      i,
+      j,
+      cost: cost[i][j],
+    }))
+    .sort((a, b) => a.cost - b.cost);
+
   const courts: CourtGame[] = [];
   let courtNumber = 1;
-
-  while (remaining.length >= 2 && courts.length < numCourts) {
-    const first = remaining.shift()!;
-    let bestIdx = 0;
-    let bestCost = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const { cost } = bestCourtArrangement(first, remaining[i], history, prevOppIds);
-      if (cost < bestCost) {
-        bestCost = cost;
-        bestIdx = i;
-      }
-    }
-    const second = remaining.splice(bestIdx, 1)[0];
-    const { team1, team2 } = bestCourtArrangement(first, second, history, prevOppIds);
-
+  for (const g of games) {
+    if (courts.length >= numCourts) break;
+    const pairA = pairs[g.i];
+    const pairB = pairs[g.j];
     courts.push({
       courtNumber: courtNumber++,
-      team1,
-      team2,
+      team1: [pairA[0], pairA[1]],
+      team2: [pairB[0], pairB[1]],
     });
   }
 
@@ -444,6 +460,14 @@ function generateOneRound(
 
   // Assign pairs to courts, minimising repeat / back-to-back opponents.
   const courts = assignCourts(pairs, numCourts, history, prevOppIds);
+
+  // Any players whose pair didn't get a court must sit out this round.
+  const seated = new Set<string>();
+  for (const court of courts) {
+    for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
+  }
+  const extraSit = playing.filter(p => !seated.has(p.id));
+  if (extraSit.length > 0) sitting = [...sitting, ...extraSit];
 
   return { courts, sittingOut: sitting };
 }

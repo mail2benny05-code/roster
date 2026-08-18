@@ -14,6 +14,14 @@ const COURT_COLORS: [string, string, string][] = [
   ['#0891b2', '#ecfeff', '#164e63'],
 ];
 
+/** Order a team so a female player is listed first (mixed rosters). */
+function orderTeam(players: Player[]): Player[] {
+  return [...players].sort((a, b) => {
+    const rank = (p: Player) => (p.gender === 'female' ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+}
+
 interface NameRowProps {
   players: Player[];
   isMixed: boolean;
@@ -146,9 +154,9 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                   return (
                     <td key={ci} style={{ background: rowBg, padding: '8px 6px', verticalAlign: 'middle' as const, borderLeft: '1px solid #e2e8f0', borderTop: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4, alignItems: 'center' }}>
-                        <NameRow players={court.team1} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
+                        <NameRow players={orderTeam(court.team1)} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
                         <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>VS</span>
-                        <NameRow players={court.team2} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
+                        <NameRow players={orderTeam(court.team2)} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
                       </div>
                     </td>
                   );
@@ -195,4 +203,3 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
 });
 
 export default RosterTable;
-

@@ -93,7 +93,7 @@ function selectSitOuts(
   return { playing, sitting };
 }
 
-// ─── Pairing (greedy min-cost matching) ───────────────────────────────────────
+// ─── Partner cost ─────────────────────────────────────────────────────────────
 
 /**
  * Cost of pairing two players as partners. Lower is better.
@@ -109,107 +109,284 @@ function partnerCost(
 ): number {
   const key = pairKey(a.id, b.id);
   const count = get(history.pairCount, key);
-  let cost = count * 10_000; // strong preference to partner someone new
-  if (prevPairIds.has(key)) cost += 1_000_000; // back-to-back repeat
+  let cost = count * 1_000_000; // repeat count dominates
+  if (prevPairIds.has(key)) cost += 100_000_000; // back-to-back repeat
   return cost;
 }
 
+// ─── Optimal min-cost bipartite matching (Hungarian algorithm) ────────────────
+
 /**
- * Greedily match a list of players into pairs, always taking the globally
- * cheapest available pair next. `restrictCrossGender` forces every pair to be
- * one male + one female (strict mixed mode).
+ * Solve the assignment problem for a square cost matrix (n x n).
+ * Returns rowMatch where rowMatch[i] is the column assigned to row i.
+ * O(n^3). Used for strict-mixed male↔female partner assignment.
  */
-function greedyPairs(
+function hungarian(cost: number[][]): number[] {
+  const n = cost.length;
+  if (n === 0) return [];
+  const INF = Number.MAX_SAFE_INTEGER;
+  const u = new Array(n + 1).fill(0);
+  const v = new Array(n + 1).fill(0);
+  const p = new Array(n + 1).fill(0); // p[j] = row matched to column j
+  const way = new Array(n + 1).fill(0);
+
+  for (let i = 1; i <= n; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = new Array(n + 1).fill(INF);
+    const used = new Array(n + 1).fill(false);
+    do {
+      used[j0] = true;
+      const i0 = p[j0];
+      let delta = INF;
+      let j1 = -1;
+      for (let j = 1; j <= n; j++) {
+        if (!used[j]) {
+          const cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+          if (cur < minv[j]) {
+            minv[j] = cur;
+            way[j] = j0;
+          }
+          if (minv[j] < delta) {
+            delta = minv[j];
+            j1 = j;
+          }
+        }
+      }
+      for (let j = 0; j <= n; j++) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do {
+      const j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0);
+  }
+
+  const rowMatch = new Array(n).fill(-1);
+  for (let j = 1; j <= n; j++) {
+    if (p[j] > 0) rowMatch[p[j] - 1] = j - 1;
+  }
+  return rowMatch;
+}
+
+/**
+ * Optimal min-cost perfect matching on a single pool of an even number of
+ * players, via DP over a bitmask of unmatched players. Exact for pools up to
+ * 16; greedy fallback above that so it never fails.
+ */
+function optimalGeneralMatching(
   players: Player[],
+  history: History,
+  prevPairIds: Set<string>,
+): [Player, Player][] {
+  const n = players.length;
+  if (n === 0) return [];
+
+  const c: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const cost = partnerCost(players[i], players[j], history, prevPairIds);
+      c[i][j] = cost;
+      c[j][i] = cost;
+    }
+  }
+
+  if (n <= 16) {
+    const full = (1 << n) - 1;
+    const dp = new Float64Array(1 << n).fill(Infinity);
+    const choice = new Int32Array(1 << n).fill(-1); // encodes (i<<8 | j)
+    dp[0] = 0;
+    for (let mask = 0; mask <= full; mask++) {
+      if (dp[mask] === Infinity) continue;
+      let i = -1;
+      for (let k = 0; k < n; k++) {
+        if (!(mask & (1 << k))) { i = k; break; }
+      }
+      if (i === -1) continue;
+      for (let j = i + 1; j < n; j++) {
+        if (mask & (1 << j)) continue;
+        const nextMask = mask | (1 << i) | (1 << j);
+        const cand = dp[mask] + c[i][j];
+        if (cand < dp[nextMask]) {
+          dp[nextMask] = cand;
+          choice[nextMask] = (i << 8) | j;
+        }
+      }
+    }
+
+    const pairs: [Player, Player][] = [];
+    let mask = full;
+    while (mask > 0) {
+      const enc = choice[mask];
+      if (enc < 0) break;
+      const i = enc >> 8;
+      const j = enc & 0xff;
+      pairs.push([players[i], players[j]]);
+      mask &= ~((1 << i) | (1 << j));
+    }
+    return pairs;
+  }
+
+  return greedyGeneralMatching(players, c);
+}
+
+/** Greedy fallback: repeatedly take the globally cheapest available pair. */
+function greedyGeneralMatching(players: Player[], c: number[][]): [Player, Player][] {
+  const remaining = players.map((_, i) => i);
+  const pairs: [Player, Player][] = [];
+  while (remaining.length >= 2) {
+    let bestI = 0, bestJ = 1, bestCost = Infinity;
+    for (let x = 0; x < remaining.length; x++) {
+      for (let y = x + 1; y < remaining.length; y++) {
+        const cost = c[remaining[x]][remaining[y]];
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestI = x;
+          bestJ = y;
+        }
+      }
+    }
+    pairs.push([players[remaining[bestI]], players[remaining[bestJ]]]);
+    remaining.splice(bestJ, 1);
+    remaining.splice(bestI, 1);
+  }
+  return pairs;
+}
+
+// ─── Pairing dispatch ─────────────────────────────────────────────────────────
+
+/**
+ * Form partner pairs for the playing set.
+ *   - Strict mixed: optimal male↔female assignment via Hungarian algorithm.
+ *   - Otherwise:    optimal general matching (exact for ≤16, greedy above).
+ */
+function formPairs(
+  playing: Player[],
   history: History,
   prevPairIds: Set<string>,
   restrictCrossGender: boolean,
 ): [Player, Player][] {
-  const remaining = shuffle(players); // randomised so ties differ each run
-  const pairs: [Player, Player][] = [];
+  if (restrictCrossGender) {
+    const males = shuffle(playing.filter(p => p.gender === 'male'));
+    const females = shuffle(playing.filter(p => p.gender === 'female'));
+    const n = Math.min(males.length, females.length);
+    if (n === 0) return [];
 
-  while (remaining.length >= 2) {
-    // Anchor on the first remaining player, find its cheapest partner.
-    const a = remaining[0];
-    let bestIdx = -1;
-    let bestCost = Infinity;
+    const cost: number[][] = Array.from({ length: n }, (_, i) =>
+      Array.from({ length: n }, (_, j) =>
+        partnerCost(males[i], females[j], history, prevPairIds),
+      ),
+    );
 
-    for (let i = 1; i < remaining.length; i++) {
-      const b = remaining[i];
-      if (restrictCrossGender && a.gender === b.gender) continue;
-      const cost = partnerCost(a, b, history, prevPairIds);
-      if (cost < bestCost) {
-        bestCost = cost;
-        bestIdx = i;
+    const rowMatch = hungarian(cost);
+    const pairs: [Player, Player][] = [];
+    for (let i = 0; i < n; i++) {
+      const j = rowMatch[i];
+      if (j >= 0 && j < females.length) {
+        pairs.push([males[i], females[j]]);
       }
     }
-
-    // Fallback: if cross-gender restriction left no partner (shouldn't happen
-    // when validated), pair with the next player regardless.
-    if (bestIdx === -1) bestIdx = 1;
-
-    const b = remaining[bestIdx];
-    pairs.push([a, b]);
-    remaining.splice(bestIdx, 1);
-    remaining.splice(0, 1);
+    return pairs;
   }
 
-  return pairs;
+  return optimalGeneralMatching(shuffle(playing), history, prevPairIds);
 }
 
 // ─── Court / opponent assignment ───────────────────────────────────────────
 
 /**
- * Opponent cost between two pairs facing each other on a court.
- * Counts every cross-pair opponent interaction; repeats cost more.
+ * Opponent cost between two teams facing each other. Every cross-team pairing
+ * of players is an opponent interaction. Repeats are penalised progressively
+ * and same-round-previous opponents (back-to-back) are heavily penalised.
+ *
+ * Because in strict mixed the two males on a court always oppose each other and
+ * the two females always oppose each other, this same function naturally
+ * spreads same-gender opponents when we evaluate every team split.
  */
 function matchupCost(
-  p1: [Player, Player],
-  p2: [Player, Player],
+  team1: Player[],
+  team2: Player[],
   history: History,
+  prevOppIds: Set<string>,
 ): number {
   let cost = 0;
-  for (const a of p1) {
-    for (const b of p2) {
-      const count = get(history.opponentCount, oppKey(a.id, b.id));
-      cost += count * count; // squared so repeats are progressively worse
+  for (const a of team1) {
+    for (const b of team2) {
+      const key = oppKey(a.id, b.id);
+      const count = get(history.opponentCount, key);
+      // Squared so repeats are progressively worse; new opponents cost 0.
+      cost += count * count * 1_000;
+      if (prevOppIds.has(key)) cost += 1_000_000; // back-to-back opponent
     }
   }
   return cost;
 }
 
 /**
- * Greedily assign pairs to courts: repeatedly take the two remaining pairs
- * whose matchup has the lowest opponent-repeat cost and place them together.
+ * Given two pairs assigned to the same court, choose how to arrange them into
+ * Team 1 vs Team 2 so that opponent fairness is best.
+ *
+ * The two players in each pair are fixed partners, so there is really only one
+ * meaningful "matchup": pairA vs pairB. But we still evaluate the opponent cost
+ * (which counts every cross pairing) and keep the pairs intact.
+ */
+function bestCourtArrangement(
+  pairA: [Player, Player],
+  pairB: [Player, Player],
+  history: History,
+  prevOppIds: Set<string>,
+): { team1: Player[]; team2: Player[]; cost: number } {
+  const team1 = [pairA[0], pairA[1]];
+  const team2 = [pairB[0], pairB[1]];
+  const cost = matchupCost(team1, team2, history, prevOppIds);
+  return { team1, team2, cost };
+}
+
+/**
+ * Assign pairs to courts minimising repeat / back-to-back opponents.
+ *
+ * Strategy: repeatedly take an anchor pair and find the opposing pair that
+ * yields the lowest opponent cost (including same-gender opponents in strict
+ * mixed, since those are simply cross-team pairings). This directly fixes the
+ * "males meet the same male twice before meeting everyone" and back-to-back
+ * opponent problems.
  */
 function assignCourts(
   pairs: [Player, Player][],
   numCourts: number,
   history: History,
+  prevOppIds: Set<string>,
 ): CourtGame[] {
   const remaining = shuffle(pairs);
   const courts: CourtGame[] = [];
   let courtNumber = 1;
 
   while (remaining.length >= 2 && courts.length < numCourts) {
-    // Pick anchor pair, then the opposing pair that shares the fewest prior
-    // opponents with it.
     const first = remaining.shift()!;
     let bestIdx = 0;
     let bestCost = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const cost = matchupCost(first, remaining[i], history);
+      const { cost } = bestCourtArrangement(first, remaining[i], history, prevOppIds);
       if (cost < bestCost) {
         bestCost = cost;
         bestIdx = i;
       }
     }
     const second = remaining.splice(bestIdx, 1)[0];
+    const { team1, team2 } = bestCourtArrangement(first, second, history, prevOppIds);
 
     courts.push({
       courtNumber: courtNumber++,
-      team1: [first[0], first[1]],
-      team2: [second[0], second[1]],
+      team1,
+      team2,
     });
   }
 
@@ -231,6 +408,7 @@ function generateOneRound(
   allowSameGender: boolean,
   prevSittingOut: Player[],
   prevPairIds: Set<string>,
+  prevOppIds: Set<string>,
 ): RoundResult {
   const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
   const slots = numCourts * 4;
@@ -260,12 +438,12 @@ function generateOneRound(
     sitting = sel.sitting;
   }
 
-  // Form partner pairs.
+  // Form partner pairs (optimal matching).
   const restrictCrossGender = isMixed && !allowSameGender;
-  const pairs = greedyPairs(playing, history, prevPairIds, restrictCrossGender);
+  const pairs = formPairs(playing, history, prevPairIds, restrictCrossGender);
 
-  // Assign pairs to courts, minimising repeat opponents.
-  const courts = assignCourts(pairs, numCourts, history);
+  // Assign pairs to courts, minimising repeat / back-to-back opponents.
+  const courts = assignCourts(pairs, numCourts, history, prevOppIds);
 
   return { courts, sittingOut: sitting };
 }
@@ -359,6 +537,7 @@ export function generateRoster(
 
   let prevSittingOut: Player[] = [];
   let prevPairIds = new Set<string>();
+  let prevOppIds = new Set<string>();
 
   for (let r = 0; r < numRounds; r++) {
     const { courts, sittingOut } = generateOneRound(
@@ -369,6 +548,7 @@ export function generateRoster(
       allowSameGender,
       prevSittingOut,
       prevPairIds,
+      prevOppIds,
     );
 
     rounds.push({ roundNumber: r + 1, courts, sittingOut });
@@ -377,6 +557,7 @@ export function generateRoster(
     // Record state for next round's back-to-back checks.
     prevSittingOut = sittingOut;
     prevPairIds = new Set<string>();
+    prevOppIds = new Set<string>();
     for (const court of courts) {
       for (const team of [court.team1, court.team2]) {
         for (let i = 0; i < team.length; i++) {
@@ -385,8 +566,162 @@ export function generateRoster(
           }
         }
       }
+      for (const a of court.team1) {
+        for (const b of court.team2) {
+          prevOppIds.add(oppKey(a.id, b.id));
+        }
+      }
     }
   }
 
   return { rounds, rosterType, allPlayers: players, numCourts, sessionName, allowSameGender };
+}
+
+// ─── Roster verification (for tests & diagnostics) ──────────────────────────
+
+export interface RosterStats {
+  partnerCounts: Map<string, number>;
+  opponentCounts: Map<string, number>;
+  sitOutCounts: Map<string, number>;
+  playCounts: Map<string, number>;
+
+  partnerMin: number;
+  partnerMax: number;
+  partnerSpread: number;
+
+  opponentMin: number;
+  opponentMax: number;
+  opponentSpread: number;
+
+  sitOutMin: number;
+  sitOutMax: number;
+  sitOutSpread: number;
+
+  backToBackSitOut: string[];
+  backToBackPartner: string[];
+  backToBackOpponent: string[];
+}
+
+/**
+ * Analyse a generated roster and return fairness statistics + rule violations.
+ * `eligiblePairKeys` / `eligibleOppKeys` (optional) restrict the min/max spread
+ * computation to pairings that can legally occur (e.g. male↔female partners, or
+ * same-gender opponents in strict mixed), so structurally impossible pairings
+ * don't skew the spread toward 0.
+ */
+export function verifyRoster(
+  data: RosterData,
+  eligiblePairKeys?: Set<string>,
+  eligibleOppKeys?: Set<string>,
+): RosterStats {
+  const partnerCounts = new Map<string, number>();
+  const opponentCounts = new Map<string, number>();
+  const sitOutCounts = new Map<string, number>();
+  const playCounts = new Map<string, number>();
+
+  for (const p of data.allPlayers) {
+    sitOutCounts.set(p.id, 0);
+    playCounts.set(p.id, 0);
+  }
+
+  const backToBackSitOut: string[] = [];
+  const backToBackPartner: string[] = [];
+  const backToBackOpponent: string[] = [];
+
+  let prevSitOut = new Set<string>();
+  let prevPartners = new Set<string>();
+  let prevOpps = new Set<string>();
+
+  for (const round of data.rounds) {
+    const curSitOut = new Set<string>();
+    const curPartners = new Set<string>();
+    const curOpps = new Set<string>();
+
+    for (const p of round.sittingOut) {
+      curSitOut.add(p.id);
+      inc(sitOutCounts, p.id);
+      if (prevSitOut.has(p.id)) backToBackSitOut.push(p.id);
+    }
+
+    for (const court of round.courts) {
+      const all = [...court.team1, ...court.team2];
+      for (const p of all) inc(playCounts, p.id);
+
+      for (const team of [court.team1, court.team2]) {
+        for (let i = 0; i < team.length; i++) {
+          for (let j = i + 1; j < team.length; j++) {
+            const key = pairKey(team[i].id, team[j].id);
+            inc(partnerCounts, key);
+            curPartners.add(key);
+            if (prevPartners.has(key)) backToBackPartner.push(key);
+          }
+        }
+      }
+
+      for (const a of court.team1) {
+        for (const b of court.team2) {
+          const key = oppKey(a.id, b.id);
+          inc(opponentCounts, key);
+          curOpps.add(key);
+          if (prevOpps.has(key)) backToBackOpponent.push(key);
+        }
+      }
+    }
+
+    prevSitOut = curSitOut;
+    prevPartners = curPartners;
+    prevOpps = curOpps;
+  }
+
+  const spread = (
+    counts: Map<string, number>,
+    eligible?: Set<string>,
+  ): [number, number] => {
+    let min = Infinity;
+    let max = 0;
+    if (eligible && eligible.size > 0) {
+      for (const key of eligible) {
+        const v = counts.get(key) ?? 0;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    } else {
+      for (const v of counts.values()) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (min === Infinity) min = 0;
+    return [min, max];
+  };
+
+  const [partnerMin, partnerMax] = spread(partnerCounts, eligiblePairKeys);
+  const [opponentMin, opponentMax] = spread(opponentCounts, eligibleOppKeys);
+
+  let sitOutMin = Infinity;
+  let sitOutMax = 0;
+  for (const v of sitOutCounts.values()) {
+    if (v < sitOutMin) sitOutMin = v;
+    if (v > sitOutMax) sitOutMax = v;
+  }
+  if (sitOutMin === Infinity) sitOutMin = 0;
+
+  return {
+    partnerCounts,
+    opponentCounts,
+    sitOutCounts,
+    playCounts,
+    partnerMin,
+    partnerMax,
+    partnerSpread: partnerMax - partnerMin,
+    opponentMin,
+    opponentMax,
+    opponentSpread: opponentMax - opponentMin,
+    sitOutMin,
+    sitOutMax,
+    sitOutSpread: sitOutMax - sitOutMin,
+    backToBackSitOut,
+    backToBackPartner,
+    backToBackOpponent,
+  };
 }

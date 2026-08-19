@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateRoster, verifyRoster } from './rosterGenerator';
-import type { Player, RosterType } from '../types';
+import type { Player } from '../types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,10 +21,6 @@ function makeMixedPlayers(numMale: number, numFemale: number): Player[] {
 
 function pairKey(a: string, b: string): string {
   return [a, b].sort().join('|');
-}
-
-function oppKey(a: string, b: string): string {
-  return [a, b].sort().join('~');
 }
 
 /** All unique pair keys for a set of player ids */

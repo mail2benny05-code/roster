@@ -53,25 +53,23 @@ function inc(map: Map<string, number>, key: string): void {
 
 // ─── Cost scale constants ────────────────────────────────────────────────────
 //
-// Partner fairness dominates opponent fairness (a partner repeat is "worse"
-// than an opponent repeat), and back-to-back repeats are penalised above all
-// else. These weights are chosen so the tiers never overlap:
+// Tiers (strictly ordered, no overlap):
 //
-//   PARTNER_REPEAT    >> OPPONENT_REPEAT   (partner fairness wins ties)
-//   BACK_TO_BACK      >> any accumulation of ordinary repeats in one round.
+//   PARTNER_BACK_TO_BACK  (1e15)  — absolutely forbidden back-to-back partner
+//   OPPONENT_BACK_TO_BACK (1e8)   — absolutely forbidden back-to-back opponent
+//   PARTNER_REPEAT        (1e9)   — each prior partnering (scaled by count²)
+//   OPPONENT_NOT_MET      (1e5)   — coverage: unmet pair after this round
+//   OPPONENT_REPEAT       (1)     — fine-grained spread (scaled by count²)
+//
+// Coverage (OPPONENT_NOT_MET) strictly dominates repeat-spread (OPPONENT_REPEAT),
+// so the optimizer exhausts all unmet pairs before repeating anyone.
+// Back-to-back penalties dominate everything else, so they are never violated.
 
-const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (squared count)
+const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (scaled by count²)
 const PARTNER_BACK_TO_BACK = 1e15;         // partnered last round — effectively forbidden
 
-// Opponent cost constants:
-//   OPPONENT_NOT_MET      — penalty for a pair that is STILL unmet after this
-//                           round's courts (drives full coverage before repeats)
-//   OPPONENT_REPEAT       — per-repeat cost (scaled by count²) once they have met;
-//                           must be large enough that one repeat clearly outweighs
-//                           coverage noise
-//   OPPONENT_BACK_TO_BACK — effectively forbidden back-to-back opponent repeat
-const OPPONENT_NOT_MET = 1_000;            // penalty per still-unmet pair after this round
-const OPPONENT_REPEAT = 1_000;             // cost per prior opposing (scaled by count²)
+const OPPONENT_REPEAT = 1;                 // fine-grained spread: cost per prior opposing (scaled by count²)
+const OPPONENT_NOT_MET = 100_000;          // coverage: dominates any realistic repeat-spread accumulation
 const OPPONENT_BACK_TO_BACK = 100_000_000; // opposed last round — effectively forbidden
 
 // ─── Sit-out selection ──────────────────────────────────────────────────────
@@ -298,10 +296,16 @@ function matchingPartnerCost(
 
 /**
  * Generate up to CANDIDATE_ATTEMPTS distinct partner matchings for the playing
- * set, keeping only those whose partner cost equals the optimum (so partner
- * fairness is never sacrificed). Randomised ordering produces different — but
- * equally partner-optimal — matchings, giving the opponent optimiser room to
- * work.
+ * set, keeping those whose partner cost is at or near the optimum.
+ *
+ * A small tolerance (one PARTNER_REPEAT unit) admits partner-equivalent
+ * matchings that differ only in fine-grained squared-count spread — never a
+ * back-to-back or a genuine extra repeat — giving the opponent optimiser more
+ * reachable court layouts to complete coverage, without trading away partner
+ * fairness.
+ *
+ * Since PARTNER_REPEAT (1e9) << PARTNER_BACK_TO_BACK (1e15), this tolerance
+ * can never admit a back-to-back partner repeat.
  */
 function candidatePartnerMatchings(
   playing: Player[],
@@ -357,10 +361,15 @@ function candidatePartnerMatchings(
     candidates.push(pairs);
   }
 
-  // Keep only matchings tied at the best (optimal) partner cost, so partner
-  // fairness is never traded away for opponent fairness.
+  // Keep matchings at (or negligibly above) the best partner cost. A small
+  // tolerance admits partner-equivalent matchings that differ only in the
+  // fine-grained squared-count spread — never a back-to-back or a genuine
+  // extra repeat — giving the opponent optimiser more reachable court layouts
+  // to complete coverage, without trading away partner fairness.
+  const tolerance = PARTNER_REPEAT; // one extra unit of squared-count spread
   const optimal = candidates.filter(
-    pairs => matchingPartnerCost(pairs, history, prevPairIds) === bestCost,
+    pairs =>
+      matchingPartnerCost(pairs, history, prevPairIds) <= bestCost + tolerance,
   );
 
   return optimal.length > 0 ? optimal : candidates;
@@ -387,8 +396,6 @@ function matchupCost(
     for (const b of pairB) {
       const key = oppKey(a.id, b.id);
       const count = get(history.opponentCount, key);
-      // A repeat is expensive; each additional repeat escalates steeply and is
-      // always far costlier than any fresh matchup (which costs 0 here).
       if (count > 0) cost += count * count * OPPONENT_REPEAT;
       if (prevOppIds.has(key)) cost += OPPONENT_BACK_TO_BACK;
     }
@@ -402,7 +409,8 @@ interface CourtAssignment {
 }
 
 /**
- * Assign pairs to courts minimising repeat / back-to-back opponents.
+ * Assign pairs to courts minimising repeat / back-to-back opponents, while
+ * maximising fresh opponent coverage.
  *
  * GLOBAL optimisation: build a cost matrix over the pairs (each pair is a node)
  * where cost[i][j] is the opponent cost of pair i facing pair j, then find the
@@ -411,10 +419,9 @@ interface CourtAssignment {
  * After the local per-matchup costs are summed, a global coverage penalty is
  * added: for every eligible opponent pair (across ALL players, not just those
  * playing this round) that is STILL unmet AFTER applying this round's courts,
- * we add OPPONENT_NOT_MET. Because this depends on which courts this candidate
- * actually plays, it varies between candidates and steers selection toward
- * layouts that resolve the most never-met opponent pairs (full coverage before
- * any repeat).
+ * we add OPPONENT_NOT_MET. Because OPPONENT_NOT_MET >> OPPONENT_REPEAT, the
+ * optimizer will always prefer meeting a new pair over avoiding a repeat —
+ * ensuring full coverage before any repeats occur.
  *
  * Returns the courts AND the total opponent cost, so the round-level search can
  * compare this court assignment against those of other partner candidates.
@@ -461,11 +468,11 @@ function assignCourts(
     });
   }
 
-  // Global coverage penalty: count how many eligible opponent pairs across ALL
-  // players are STILL unmet AFTER applying this round's courts. Because it
-  // depends on the courts this candidate actually plays, it varies between
-  // candidates and steers selection toward layouts that resolve the most
-  // never-met opponent pairs (full coverage before any repeat).
+  // Global coverage penalty: for every opponent pair across ALL players that
+  // is STILL unmet after applying this round's courts, add OPPONENT_NOT_MET.
+  // Because OPPONENT_NOT_MET (1e5) >> OPPONENT_REPEAT (1), the optimizer will
+  // always prefer meeting a new pair over avoiding a repeat, ensuring full
+  // coverage before any repeats occur.
   const metThisRound = new Set<string>();
   for (const court of courts) {
     for (const a of court.team1) {

@@ -24,7 +24,6 @@ export default function RosterPage({
     if (!tableRef.current) return;
     const el = tableRef.current;
 
-    // Capture the full element, not just the visible/clipped portion
     const dataUrl = await toPng(el, {
       pixelRatio: 2,
       backgroundColor: '#ffffff',
@@ -34,7 +33,6 @@ export default function RosterPage({
 
     const filename = `${data.sessionName || 'roster'}.png`;
 
-    // On mobile, use the Web Share API so the user can "Save to Photos"
     if (typeof navigator.share === 'function') {
       try {
         const res = await fetch(dataUrl);
@@ -45,20 +43,28 @@ export default function RosterPage({
           return;
         }
       } catch {
-        // User cancelled or share not supported — fall through to download
+        // fall through to download
       }
     }
 
-    // Desktop fallback: trigger a file download
     const link = document.createElement('a');
     link.download = filename;
     link.href = dataUrl;
     link.click();
   }
 
-  const formatLabel = data.rosterType === 'mixed'
-    ? data.allowSameGender ? 'Mixed (flexible)' : 'Mixed'
-    : 'Gender-based';
+  // Derive a human-readable format label
+  function formatLabel(): string {
+    if (data.rosterType === 'mixed') {
+      return data.allowSameGender ? 'Mixed (flexible)' : 'Mixed';
+    }
+    if (data.partnerMode === 'hybrid') {
+      return 'Gender-based (combo)';
+    }
+    return 'Gender-based';
+  }
+
+  const label = formatLabel();
   const hasSitOuts = data.rounds.some(r => r.sittingOut.length > 0);
 
   return (
@@ -116,7 +122,7 @@ export default function RosterPage({
       {/* Subtitle */}
       <div className="max-w-5xl mx-auto mb-4">
         <p className="text-slate-400 text-sm">
-          {formatLabel} &bull; {data.numCourts} court{data.numCourts > 1 ? 's' : ''} &bull; {data.rounds.length} rounds &bull; {data.allPlayers.length} players
+          {label} &bull; {data.numCourts} court{data.numCourts > 1 ? 's' : ''} &bull; {data.rounds.length} rounds &bull; {data.allPlayers.length} players
         </p>
         {data.sessionName && (
           <h2 className="text-white text-xl font-bold mt-1">{data.sessionName}</h2>
@@ -161,7 +167,7 @@ export default function RosterPage({
           },
           {
             label: 'Format',
-            value: formatLabel,
+            value: label,
             icon: (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -181,7 +187,6 @@ export default function RosterPage({
 
       {/* Roster table */}
       <div className="max-w-5xl mx-auto mb-6">
-        {/* Mobile scroll hint */}
         <div className="flex items-center gap-1.5 text-slate-500 text-xs mb-2 sm:hidden">
           <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16l-4-4m0 0l4-4m-4 4h18" />
@@ -210,8 +215,13 @@ export default function RosterPage({
               : 'Each pair is always 1 male + 1 female.'}
           </p>
         )}
+        {data.rosterType === 'gender' && data.partnerMode === 'hybrid' && (
+          <p>
+            Gender indicators: <span className="text-blue-400">♂</span> male · <span className="text-pink-400">♀</span> female.{' '}
+            Mixed (♂♀) courts are maximised each round; remaining players form gender-based courts.
+          </p>
+        )}
       </div>
     </div>
   );
 }
-

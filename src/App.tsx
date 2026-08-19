@@ -10,10 +10,13 @@ import HistoryPage from './components/HistoryPage';
 
 const DEFAULT_SETUP: SetupState = {
   rosterType: 'gender',
+  partnerMode: 'strict',
   numCourts: 1,
   numRounds: 5,
   players: [],
   sessionName: '',
+  allowSameGender: false,
+  trackGender: false,
 };
 
 export default function App() {
@@ -63,6 +66,7 @@ export default function App() {
       state.rosterType,
       state.sessionName,
       state.allowSameGender ?? false,
+      state.partnerMode,
     );
     setRosterData(data);
     setPage('roster');

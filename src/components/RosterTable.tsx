@@ -24,19 +24,19 @@ function orderTeam(players: Player[]): Player[] {
 
 interface NameRowProps {
   players: Player[];
-  isMixed: boolean;
+  showGender: boolean;
   textColor: string;
   bgColor: string;
 }
 
-function NameRow({ players, isMixed, textColor, bgColor }: NameRowProps) {
+function NameRow({ players, showGender, textColor, bgColor }: NameRowProps) {
   return (
     <div style={{ background: bgColor, borderRadius: 8, padding: '5px 8px', display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' as const, color: textColor, fontSize: 13, fontWeight: 600 }}>
       {players.map((p, i) => (
         <span key={p.id}>
           {i > 0 && <span style={{ color: '#94a3b8', fontWeight: 400, margin: '0 2px' }}>&amp;</span>}
           {p.name}
-          {isMixed && (
+          {showGender && p.gender && (
             <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 10, marginLeft: 2 }}>
               {p.gender === 'male' ? '♂' : '♀'}
             </sup>
@@ -52,10 +52,10 @@ interface PlayerPanelProps {
   players: Player[];
   accentColor: string;
   bgColor: string;
-  isMixed: boolean;
+  showGender: boolean;
 }
 
-function PlayerPanel({ title, players, accentColor, bgColor, isMixed }: PlayerPanelProps) {
+function PlayerPanel({ title, players, accentColor, bgColor, showGender }: PlayerPanelProps) {
   const cols = Math.min(4, Math.max(1, Math.ceil(players.length / 2)));
   return (
     <div style={{ background: bgColor, borderRadius: 10, padding: '10px 14px', flex: 1 }}>
@@ -65,7 +65,7 @@ function PlayerPanel({ title, players, accentColor, bgColor, isMixed }: PlayerPa
           <div key={p.id} style={{ fontSize: 12, color: '#374151' }}>
             <span style={{ color: '#9ca3af', marginRight: 4 }}>{i + 1}.</span>
             {p.name}
-            {isMixed && (
+            {showGender && p.gender && (
               <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 9, marginLeft: 2 }}>
                 {p.gender === 'male' ? '♂' : '♀'}
               </sup>
@@ -78,12 +78,22 @@ function PlayerPanel({ title, players, accentColor, bgColor, isMixed }: PlayerPa
 }
 
 const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function RosterTable({ data }, ref) {
-  const { rounds, rosterType, allPlayers, numCourts, sessionName } = data;
+  const { rounds, rosterType, partnerMode, allPlayers, numCourts, sessionName } = data;
   const isMixed = rosterType === 'mixed';
+  const isHybrid = rosterType === 'gender' && partnerMode === 'hybrid';
+  // Show gender indicators when mixed OR hybrid combo mode
+  const showGender = isMixed || isHybrid;
   const hasSitOuts = rounds.some(r => r.sittingOut.length > 0);
   const today = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
   const males = allPlayers.filter(p => p.gender === 'male');
   const females = allPlayers.filter(p => p.gender === 'female');
+
+  // Format label for the exported image header
+  function formatLabel(): string {
+    if (isMixed) return data.allowSameGender ? 'Mixed (flexible)' : 'Mixed';
+    if (isHybrid) return 'Gender-based (combo)';
+    return 'Gender-based';
+  }
 
   return (
     <div
@@ -102,13 +112,13 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, justifyContent: 'flex-end' }}>
           {[
-            isMixed ? 'Mixed' : 'Gender-based',
+            formatLabel(),
             `${numCourts} Court${numCourts > 1 ? 's' : ''}`,
             `${rounds.length} Rounds`,
             `${allPlayers.length} Players`,
-          ].map(label => (
-            <span key={label} style={{ background: '#ede9fe', color: '#6d28d9', borderRadius: 20, padding: '3px 10px', fontSize: 11, fontWeight: 600 }}>
-              {label}
+          ].map(lbl => (
+            <span key={lbl} style={{ background: '#ede9fe', color: '#6d28d9', borderRadius: 20, padding: '3px 10px', fontSize: 11, fontWeight: 600 }}>
+              {lbl}
             </span>
           ))}
         </div>
@@ -154,9 +164,9 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                   return (
                     <td key={ci} style={{ background: rowBg, padding: '8px 6px', verticalAlign: 'middle' as const, borderLeft: '1px solid #e2e8f0', borderTop: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4, alignItems: 'center' }}>
-                        <NameRow players={orderTeam(court.team1)} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
+                        <NameRow players={orderTeam(court.team1)} showGender={showGender} textColor={textColor} bgColor={tintBg} />
                         <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>VS</span>
-                        <NameRow players={orderTeam(court.team2)} isMixed={isMixed} textColor={textColor} bgColor={tintBg} />
+                        <NameRow players={orderTeam(court.team2)} showGender={showGender} textColor={textColor} bgColor={tintBg} />
                       </div>
                     </td>
                   );
@@ -175,13 +185,13 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
       {/* Footer */}
       <div style={{ marginTop: 16, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', gap: 10, flex: 1 }}>
-          {isMixed ? (
+          {showGender && males.length > 0 && females.length > 0 ? (
             <>
-              <PlayerPanel title="♂ Male Players" players={males} accentColor="#3b82f6" bgColor="#eff6ff" isMixed={true} />
-              <PlayerPanel title="♀ Female Players" players={females} accentColor="#ec4899" bgColor="#fdf2f8" isMixed={true} />
+              <PlayerPanel title="♂ Male Players" players={males} accentColor="#3b82f6" bgColor="#eff6ff" showGender={true} />
+              <PlayerPanel title="♀ Female Players" players={females} accentColor="#ec4899" bgColor="#fdf2f8" showGender={true} />
             </>
           ) : (
-            <PlayerPanel title="Players" players={allPlayers} accentColor="#6d28d9" bgColor="#f5f3ff" isMixed={false} />
+            <PlayerPanel title="Players" players={allPlayers} accentColor="#6d28d9" bgColor="#f5f3ff" showGender={false} />
           )}
         </div>
         <div style={{ minWidth: 100 }}>

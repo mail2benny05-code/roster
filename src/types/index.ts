@@ -39,4 +39,5 @@ export interface SetupState {
   players: Player[];
   sessionName: string;
   allowSameGender?: boolean;
+  trackGender?: boolean;
 }

@@ -626,12 +626,12 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-base">🤝</span>
                   <span className="text-white font-semibold text-sm group-hover:text-violet-300 transition-colors">
-                    Mixed + gender-based combo
+                    Prefer mixed pairs (♂♀)
                   </span>
                 </div>
                 <p className="text-slate-400 text-xs leading-relaxed">
-                  Maximise mixed (♂♀) courts each round. Any leftover players form gender-based courts.
-                  Great for social play with a mix of genders.
+                  As many <span className="text-violet-300">♂♀</span> pairs as possible each round. Any leftover players
+                  form same-gender courts. <span className="text-slate-500">♂♂ or ♀♀ pairs only appear when the numbers don't divide evenly.</span>
                 </p>
               </button>
 
@@ -642,10 +642,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-base">🎲</span>
-                  <span className="text-white font-semibold text-sm">Random partners</span>
+                  <span className="text-white font-semibold text-sm">Ignore gender entirely</span>
                 </div>
                 <p className="text-slate-400 text-xs leading-relaxed">
-                  Partners are assigned purely for fairness — gender is ignored when forming pairs.
+                  Partners are chosen purely for fairness — gender is <span className="text-amber-400 font-medium">completely ignored</span>.{' '}
+                  <span className="text-slate-500">♂♂, ♀♀, and ♂♀ pairs all appear freely.</span>{' '}
                   Best for competitive or gender-neutral play.
                 </p>
               </button>

@@ -48,7 +48,7 @@ function NameRow({ players, showGender, textColor, bgColor }: NameRowProps) {
           {i > 0 && <span style={{ color: '#94a3b8', fontWeight: 400, margin: '0 2px' }}>&amp;</span>}
           {p.name}
           {showGender && p.gender && (
-            <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', marginLeft: 2 }}>
+            <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 8, marginLeft: 1 }}>
               {p.gender === 'male' ? '♂' : '♀'}
             </sup>
           )}
@@ -70,14 +70,14 @@ function PlayerPanel({ title, players, accentColor, bgColor, showGender }: Playe
   const cols = Math.min(4, Math.max(1, Math.ceil(players.length / 2)));
   return (
     <div className="roster-player-panel" style={{ background: bgColor }}>
-      <div style={{ color: accentColor, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{title}</div>
+      <div style={{ color: accentColor, fontWeight: 700, fontSize: 11, marginBottom: 6 }}>{title}</div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '4px 12px' }}>
         {players.map((p, i) => (
-          <div key={p.id} style={{ fontSize: 12, color: '#374151' }}>
+          <div key={p.id} style={{ fontSize: 10, color: '#374151' }}>
             <span style={{ color: '#9ca3af', marginRight: 4 }}>{i + 1}.</span>
             {p.name}
             {showGender && p.gender && (
-              <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 9, marginLeft: 2 }}>
+              <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 8, marginLeft: 2 }}>
                 {p.gender === 'male' ? '♂' : '♀'}
               </sup>
             )}
@@ -121,7 +121,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}
       >
         <div>
-          <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 2 }}>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 2 }}>
             Pickleball Schedule
           </div>
           <div className="roster-session-title">
@@ -242,7 +242,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                       className="roster-td"
                       style={{
                         background: rowBg,
-                        fontSize: 12,
+                        fontSize: 10,
                         color: '#64748b',
                         fontStyle: 'italic',
                         borderLeft: '1px solid #e2e8f0',

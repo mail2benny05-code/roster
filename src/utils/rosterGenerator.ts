@@ -1,4 +1,4 @@
-import type { Player, CourtGame, Round, RosterData, RosterType } from '../types';
+import type { Player, CourtGame, Round, RosterData, RosterType, PartnerMode } from '../types';
 
 // ─── Helper keys ─────────────────────────────────────────────────────────────
 
@@ -10,458 +10,504 @@ function oppKey(a: string, b: string): string {
   return [a, b].sort().join('~');
 }
 
-// ─── GlobalHistory ────────────────────────────────────────────────────────────
-
-interface GlobalHistory {
-  pairCount: Map<string, number>;
-  opponentCount: Map<string, number>;
-  courtTogetherCount: Map<string, number>;
-  sitOutTogetherCount: Map<string, number>;
-  sitOutCount: Map<string, number>;
-  playCount: Map<string, number>;
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-function makeHistory(players: Player[]): GlobalHistory {
+// ─── History ──────────────────────────────────────────────────────────────────
+
+interface History {
+  pairCount: Map<string, number>;        // times two players partnered
+  opponentCount: Map<string, number>;    // times two players opposed
+  sitOutCount: Map<string, number>;      // times a player sat out
+  playCount: Map<string, number>;        // times a player played
+  mixedCount: Map<string, number>;       // times a player played in a mixed (♂♀) court
+}
+
+function makeHistory(players: Player[]): History {
   const playCount = new Map<string, number>();
   const sitOutCount = new Map<string, number>();
+  const mixedCount = new Map<string, number>();
   for (const p of players) {
     playCount.set(p.id, 0);
     sitOutCount.set(p.id, 0);
+    mixedCount.set(p.id, 0);
   }
   return {
     pairCount: new Map(),
     opponentCount: new Map(),
-    courtTogetherCount: new Map(),
-    sitOutTogetherCount: new Map(),
     sitOutCount,
     playCount,
+    mixedCount,
   };
 }
 
+function get(map: Map<string, number>, key: string): number {
+  return map.get(key) ?? 0;
+}
+
 function inc(map: Map<string, number>, key: string): void {
-  map.set(key, (map.get(key) ?? 0) + 1);
+  map.set(key, get(map, key) + 1);
 }
 
-function updateHistory(
-  courts: CourtGame[],
-  sittingOut: Player[],
-  history: GlobalHistory,
-): void {
-  for (const court of courts) {
-    const allOnCourt = [...court.team1, ...court.team2];
+// ─── Cost scale constants ────────────────────────────────────────────────────
 
-    // playCount
-    for (const p of allOnCourt) {
-      inc(history.playCount, p.id);
-    }
+const PARTNER_REPEAT = 1_000_000_000;
+const PARTNER_BACK_TO_BACK = 1e15;
 
-    // pairCount for each team
-    for (const team of [court.team1, court.team2]) {
-      for (let i = 0; i < team.length; i++) {
-        for (let j = i + 1; j < team.length; j++) {
-          inc(history.pairCount, pairKey(team[i].id, team[j].id));
-        }
-      }
-    }
+const OPPONENT_REPEAT = 1;
+const OPPONENT_NOT_MET = 100_000;
+const OPPONENT_BACK_TO_BACK = 100_000_000;
 
-    // opponentCount: every cross-team pair
-    for (const p1 of court.team1) {
-      for (const p2 of court.team2) {
-        inc(history.opponentCount, oppKey(p1.id, p2.id));
-      }
-    }
+// ─── Sit-out selection ──────────────────────────────────────────────────────
 
-    // courtTogetherCount: every pair sharing a court
-    for (let i = 0; i < allOnCourt.length; i++) {
-      for (let j = i + 1; j < allOnCourt.length; j++) {
-        inc(history.courtTogetherCount, pairKey(allOnCourt[i].id, allOnCourt[j].id));
-      }
-    }
+function selectSitOuts(
+  pool: Player[],
+  numSitOut: number,
+  history: History,
+  prevSitOutIds: Set<string>,
+): { playing: Player[]; sitting: Player[] } {
+  if (numSitOut <= 0) {
+    return { playing: [...pool], sitting: [] };
+  }
+  if (numSitOut >= pool.length) {
+    return { playing: [], sitting: [...pool] };
   }
 
-  // sitOutCount and sitOutTogetherCount
-  for (const p of sittingOut) {
-    inc(history.sitOutCount, p.id);
-  }
-  for (let i = 0; i < sittingOut.length; i++) {
-    for (let j = i + 1; j < sittingOut.length; j++) {
-      inc(history.sitOutTogetherCount, pairKey(sittingOut[i].id, sittingOut[j].id));
-    }
-  }
+  const ranked = shuffle(pool).sort((a, b) => {
+    const sa = get(history.sitOutCount, a.id);
+    const sb = get(history.sitOutCount, b.id);
+    if (sa !== sb) return sa - sb;
+    const la = prevSitOutIds.has(a.id) ? 1 : 0;
+    const lb = prevSitOutIds.has(b.id) ? 1 : 0;
+    return la - lb;
+  });
+
+  const sitting = ranked.slice(0, numSitOut);
+  const sittingIds = new Set(sitting.map(p => p.id));
+  const playing = pool.filter(p => !sittingIds.has(p.id));
+  return { playing, sitting };
 }
 
-// ─── Weighted shuffle ─────────────────────────────────────────────────────────
+// ─── Partner cost ─────────────────────────────────────────────────────────────
 
-function weightedShuffle(players: Player[], history: GlobalHistory): Player[] {
-  const counts = players.map(p => history.playCount.get(p.id) ?? 0);
-  const maxCount = Math.max(...counts, 0);
-  const weights = counts.map(c => maxCount - c + 1);
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
-
-  const result: Player[] = [];
-  const remaining = [...players];
-  const remainingWeights = [...weights];
-
-  while (remaining.length > 0) {
-    let r = Math.random() * remainingWeights.reduce((a, b) => a + b, 0);
-    let idx = 0;
-    for (let i = 0; i < remainingWeights.length; i++) {
-      r -= remainingWeights[i];
-      if (r <= 0) { idx = i; break; }
-    }
-    result.push(remaining[idx]);
-    remaining.splice(idx, 1);
-    remainingWeights.splice(idx, 1);
-  }
-
-  void totalWeight;
-  return result;
-}
-
-// ─── Split scoring ────────────────────────────────────────────────────────────
-
-function splitScore(t1: Player[], t2: Player[], history: GlobalHistory): number {
-  let score = 0;
-
-  // pair scores
-  for (const team of [t1, t2]) {
-    for (let i = 0; i < team.length; i++) {
-      for (let j = i + 1; j < team.length; j++) {
-        const k = pairKey(team[i].id, team[j].id);
-        const count = history.pairCount.get(k) ?? 0;
-        score += count === 0 ? 2000 : -count * 5000;
-      }
-    }
-  }
-
-  // opponent scores
-  for (const p1 of t1) {
-    for (const p2 of t2) {
-      const k = oppKey(p1.id, p2.id);
-      const count = history.opponentCount.get(k) ?? 0;
-      score += count === 0 ? 500 : -count * 1000;
-    }
-  }
-
-  return score;
-}
-
-function bestGenericSplit(
-  group: Player[],
-  history: GlobalHistory,
-): [Player[], Player[]] {
-  // 3 ways to split 4 players into 2 pairs
-  const splits: [Player[], Player[]][] = [
-    [[group[0], group[1]], [group[2], group[3]]],
-    [[group[0], group[2]], [group[1], group[3]]],
-    [[group[0], group[3]], [group[1], group[2]]],
-  ];
-
-  let best = splits[0];
-  let bestScore = splitScore(splits[0][0], splits[0][1], history);
-
-  for (let i = 1; i < splits.length; i++) {
-    const s = splitScore(splits[i][0], splits[i][1], history);
-    if (s > bestScore) {
-      bestScore = s;
-      best = splits[i];
-    }
-  }
-
-  return best;
-}
-
-function bestMixedSplit(
-  group: Player[], // [m1, m2, f1, f2]
-  history: GlobalHistory,
-): [Player[], Player[]] {
-  const [m1, m2, f1, f2] = group;
-  // 2 valid male+female pairings:
-  // Option A: (m1+f1) vs (m2+f2)
-  // Option B: (m1+f2) vs (m2+f1)
-  const optA: [Player[], Player[]] = [[m1, f1], [m2, f2]];
-  const optB: [Player[], Player[]] = [[m1, f2], [m2, f1]];
-
-  const scoreA = splitScore(optA[0], optA[1], history);
-  const scoreB = splitScore(optB[0], optB[1], history);
-
-  return scoreA >= scoreB ? optA : optB;
-}
-
-// ─── Round scoring ────────────────────────────────────────────────────────────
-
-function scoreAssignment(
-  courts: CourtGame[],
-  sittingOut: Player[],
-  history: GlobalHistory,
-  allPlayers: Player[],
-  prevSittingOut: Player[],
+function partnerCost(
+  a: Player,
+  b: Player,
+  history: History,
+  prevPairIds: Set<string>,
 ): number {
-  let score = 0;
-
-  // Sum splitScore for each court
-  for (const court of courts) {
-    score += splitScore(court.team1, court.team2, history);
-  }
-
-  // Court-together diversity bonus
-  for (const court of courts) {
-    const all = [...court.team1, ...court.team2];
-    for (let i = 0; i < all.length; i++) {
-      for (let j = i + 1; j < all.length; j++) {
-        const k = pairKey(all[i].id, all[j].id);
-        const count = history.courtTogetherCount.get(k) ?? 0;
-        score += count === 0 ? 300 : -count * 400;
-      }
-    }
-  }
-
-  // Sit-out pair diversity
-  for (let i = 0; i < sittingOut.length; i++) {
-    for (let j = i + 1; j < sittingOut.length; j++) {
-      const k = pairKey(sittingOut[i].id, sittingOut[j].id);
-      const count = history.sitOutTogetherCount.get(k) ?? 0;
-      score += count === 0 ? 500 : -count * 2000;
-    }
-  }
-
-  // Sit-out rotation fairness penalty:
-  // Heavily penalise picking a player to sit out who has already sat out
-  // more times than the current minimum across ALL players.
-  if (sittingOut.length > 0) {
-    const minSitOutCount = Math.min(
-      ...allPlayers.map(p => history.sitOutCount.get(p.id) ?? 0),
-    );
-    for (const p of sittingOut) {
-      const excess = (history.sitOutCount.get(p.id) ?? 0) - minSitOutCount;
-      if (excess > 0) {
-        score -= excess * 10000;
-      }
-    }
-  }
-
-  // Consecutive sit-out penalty: very strongly penalise any player who sat out
-  // last round sitting out again. This steers lower-priority fallback buckets
-  // away from consecutive sit-outs even before the hard constraint is applied.
-  if (sittingOut.length > 0 && prevSittingOut.length > 0) {
-    const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
-    for (const p of sittingOut) {
-      if (prevSitOutIds.has(p.id)) {
-        score -= 50000;
-      }
-    }
-  }
-
-  // Fair-play penalty: prefer sitting out players who have played more
-  if (sittingOut.length > 0) {
-    const playCounts = allPlayers.map(p => history.playCount.get(p.id) ?? 0);
-    const sitOutPlayCounts = sittingOut.map(p => history.playCount.get(p.id) ?? 0);
-    const maxPlay = Math.max(...playCounts);
-    const minSitOutPlay = Math.min(...sitOutPlayCounts);
-    if (maxPlay > minSitOutPlay) {
-      score -= (maxPlay - minSitOutPlay) * 100;
-    }
-  }
-
-  return score;
+  const key = pairKey(a.id, b.id);
+  const count = get(history.pairCount, key);
+  let cost = count * count * PARTNER_REPEAT;
+  if (prevPairIds.has(key)) cost += PARTNER_BACK_TO_BACK;
+  return cost;
 }
 
-// ─── Constraint checkers ──────────────────────────────────────────────────────
+// ─── Optimal min-cost bipartite matching (Hungarian algorithm) ────────────────
 
-function isSitOutUnfair(
-  sittingOut: Player[],
-  allPlayers: Player[],
-  history: GlobalHistory,
-  isMixed: boolean,
-  allowSameGender: boolean,
-): boolean {
-  // A player is only eligible to sit out if their sit-out count equals the
-  // current minimum across their pool. This enforces fairness across ALL
-  // cycles — not just the first one — so no player can sit out twice before
-  // everyone else has sat out once, three times before everyone has sat out
-  // twice, and so on.
+function hungarian(cost: number[][]): number[] {
+  const n = cost.length;
+  if (n === 0) return [];
+  const INF = Number.MAX_SAFE_INTEGER;
+  const u = new Array(n + 1).fill(0);
+  const v = new Array(n + 1).fill(0);
+  const p = new Array(n + 1).fill(0);
+  const way = new Array(n + 1).fill(0);
 
-  if (isMixed && !allowSameGender) {
-    // Strict mixed: males and females have independent sit-out pools.
-    for (const gender of ['male', 'female'] as const) {
-      const genderSittingOut = sittingOut.filter(p => p.gender === gender);
-      if (genderSittingOut.length === 0) continue;
+  for (let i = 1; i <= n; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = new Array(n + 1).fill(INF);
+    const used = new Array(n + 1).fill(false);
+    do {
+      used[j0] = true;
+      const i0 = p[j0];
+      let delta = INF;
+      let j1 = -1;
+      for (let j = 1; j <= n; j++) {
+        if (!used[j]) {
+          const cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+          if (cur < minv[j]) {
+            minv[j] = cur;
+            way[j] = j0;
+          }
+          if (minv[j] < delta) {
+            delta = minv[j];
+            j1 = j;
+          }
+        }
+      }
+      for (let j = 0; j <= n; j++) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do {
+      const j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0);
+  }
 
-      const genderPlayers = allPlayers.filter(p => p.gender === gender);
-      const minSitOut = Math.min(
-        ...genderPlayers.map(p => history.sitOutCount.get(p.id) ?? 0),
+  const rowMatch = new Array(n).fill(-1);
+  for (let j = 1; j <= n; j++) {
+    if (p[j] > 0) rowMatch[p[j] - 1] = j - 1;
+  }
+  return rowMatch;
+}
+
+// ─── Generic optimal min-cost perfect matching (bitmask DP) ───────────────────
+
+function minCostMatchingIndices(cost: number[][]): [number, number][] {
+  const n = cost.length;
+  if (n === 0) return [];
+
+  if (n <= 16) {
+    const full = (1 << n) - 1;
+    const dp = new Float64Array(1 << n).fill(Infinity);
+    const choice = new Int32Array(1 << n).fill(-1);
+    dp[0] = 0;
+    for (let mask = 0; mask <= full; mask++) {
+      if (dp[mask] === Infinity) continue;
+      let i = -1;
+      for (let k = 0; k < n; k++) {
+        if (!(mask & (1 << k))) { i = k; break; }
+      }
+      if (i === -1) continue;
+      for (let j = i + 1; j < n; j++) {
+        if (mask & (1 << j)) continue;
+        const nextMask = mask | (1 << i) | (1 << j);
+        const cand = dp[mask] + cost[i][j];
+        if (cand < dp[nextMask]) {
+          dp[nextMask] = cand;
+          choice[nextMask] = (i << 8) | j;
+        }
+      }
+    }
+
+    const matches: [number, number][] = [];
+    let mask = full;
+    while (mask > 0) {
+      const enc = choice[mask];
+      if (enc < 0) break;
+      const i = enc >> 8;
+      const j = enc & 0xff;
+      matches.push([i, j]);
+      mask &= ~((1 << i) | (1 << j));
+    }
+    return matches;
+  }
+
+  // Greedy fallback for very large node counts.
+  const remaining = Array.from({ length: n }, (_, i) => i);
+  const matches: [number, number][] = [];
+  while (remaining.length >= 2) {
+    let bestX = 0, bestY = 1, bestCost = Infinity;
+    for (let x = 0; x < remaining.length; x++) {
+      for (let y = x + 1; y < remaining.length; y++) {
+        const c = cost[remaining[x]][remaining[y]];
+        if (c < bestCost) {
+          bestCost = c;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+    matches.push([remaining[bestX], remaining[bestY]]);
+    remaining.splice(bestY, 1);
+    remaining.splice(bestX, 1);
+  }
+  return matches;
+}
+
+// ─── Candidate partner matchings ─────────────────────────────────────────────
+
+const CANDIDATE_ATTEMPTS = 200;
+
+function matchingPartnerCost(
+  pairs: [Player, Player][],
+  history: History,
+  prevPairIds: Set<string>,
+): number {
+  let total = 0;
+  for (const [a, b] of pairs) total += partnerCost(a, b, history, prevPairIds);
+  return total;
+}
+
+function candidatePartnerMatchings(
+  playing: Player[],
+  history: History,
+  prevPairIds: Set<string>,
+  restrictCrossGender: boolean,
+): [Player, Player][][] {
+  const build = (): [Player, Player][] => {
+    if (restrictCrossGender) {
+      const males = shuffle(playing.filter(p => p.gender === 'male'));
+      const females = shuffle(playing.filter(p => p.gender === 'female'));
+      const n = Math.min(males.length, females.length);
+      if (n === 0) return [];
+      const cost: number[][] = Array.from({ length: n }, (_, i) =>
+        Array.from({ length: n }, (_, j) =>
+          partnerCost(males[i], females[j], history, prevPairIds),
+        ),
       );
+      const rowMatch = hungarian(cost);
+      const pairs: [Player, Player][] = [];
+      for (let i = 0; i < n; i++) {
+        const j = rowMatch[i];
+        if (j >= 0 && j < females.length) pairs.push([males[i], females[j]]);
+      }
+      return pairs;
+    }
 
-      // Unfair if any sitting-out player has a higher sit-out count than the minimum
-      if (genderSittingOut.some(p => (history.sitOutCount.get(p.id) ?? 0) > minSitOut)) {
-        return true;
+    const pool = shuffle(playing);
+    const n = pool.length;
+    if (n < 2) return [];
+    const c: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const cost = partnerCost(pool[i], pool[j], history, prevPairIds);
+        c[i][j] = cost;
+        c[j][i] = cost;
       }
     }
-    return false;
+    const matches = minCostMatchingIndices(c);
+    return matches.map(([i, j]) => [pool[i], pool[j]] as [Player, Player]);
+  };
+
+  const candidates: [Player, Player][][] = [];
+  let bestCost = Infinity;
+
+  for (let attempt = 0; attempt < CANDIDATE_ATTEMPTS; attempt++) {
+    const pairs = build();
+    if (pairs.length === 0) continue;
+    const cost = matchingPartnerCost(pairs, history, prevPairIds);
+    if (cost < bestCost) {
+      bestCost = cost;
+    }
+    candidates.push(pairs);
   }
 
-  // Gender-based mode OR flexible mixed (allowSameGender=true): single combined pool.
-  const minSitOut = Math.min(
-    ...allPlayers.map(p => history.sitOutCount.get(p.id) ?? 0),
+  const tolerance = PARTNER_REPEAT;
+  const optimal = candidates.filter(
+    pairs =>
+      matchingPartnerCost(pairs, history, prevPairIds) <= bestCost + tolerance,
   );
 
-  // Unfair if any sitting-out player has already sat out more than the minimum
-  return sittingOut.some(p => (history.sitOutCount.get(p.id) ?? 0) > minSitOut);
+  return optimal.length > 0 ? optimal : candidates;
 }
 
-function isConsecutivePair(
-  courts: CourtGame[],
-  prevRoundPairIds: Set<string>,
-): boolean {
-  for (const court of courts) {
-    for (const team of [court.team1, court.team2]) {
-      for (let i = 0; i < team.length; i++) {
-        for (let j = i + 1; j < team.length; j++) {
-          if (prevRoundPairIds.has(pairKey(team[i].id, team[j].id))) {
-            return true;
-          }
-        }
-      }
+// ─── Court / opponent assignment ───────────────────────────────────────────
+
+function matchupCost(
+  pairA: [Player, Player],
+  pairB: [Player, Player],
+  history: History,
+  prevOppIds: Set<string>,
+): number {
+  let cost = 0;
+  for (const a of pairA) {
+    for (const b of pairB) {
+      const key = oppKey(a.id, b.id);
+      const count = get(history.opponentCount, key);
+      if (count > 0) cost += count * count * OPPONENT_REPEAT;
+      if (prevOppIds.has(key)) cost += OPPONENT_BACK_TO_BACK;
     }
   }
-  return false;
+  return cost;
 }
 
-function isPrematurePairRepeat(
-  courts: CourtGame[],
-  allPlayers: Player[],
-  history: GlobalHistory,
-  isMixed: boolean,
-  allowSameGender: boolean,
-): boolean {
-  for (const court of courts) {
-    for (const team of [court.team1, court.team2]) {
-      for (let i = 0; i < team.length; i++) {
-        for (let j = i + 1; j < team.length; j++) {
-          const k = pairKey(team[i].id, team[j].id);
-          const count = history.pairCount.get(k) ?? 0;
-          if (count > 0) {
-            // Check if both players have someone they've partnered fewer times.
-            // In strict mixed mode only opposite-gender players are valid partners;
-            // using ALL players would make aMin/bMin always 0 (same-gender pairs
-            // never form), causing this check to always return true and emptying
-            // bucket 3 entirely.
-            const pA = team[i];
-            const pB = team[j];
-
-            const eligibleForA =
-              isMixed && !allowSameGender
-                ? allPlayers.filter(p => p.id !== pA.id && p.gender !== pA.gender)
-                : allPlayers.filter(p => p.id !== pA.id);
-
-            const eligibleForB =
-              isMixed && !allowSameGender
-                ? allPlayers.filter(p => p.id !== pB.id && p.gender !== pB.gender)
-                : allPlayers.filter(p => p.id !== pB.id);
-
-            const aMin =
-              eligibleForA.length === 0
-                ? count
-                : Math.min(...eligibleForA.map(p => history.pairCount.get(pairKey(pA.id, p.id)) ?? 0));
-            const bMin =
-              eligibleForB.length === 0
-                ? count
-                : Math.min(...eligibleForB.map(p => history.pairCount.get(pairKey(pB.id, p.id)) ?? 0));
-
-            if (aMin < count && bMin < count) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-  }
-  return false;
+interface CourtAssignment {
+  courts: CourtGame[];
+  opponentCost: number;
 }
 
-function isPrematureOpponentRepeat(
-  courts: CourtGame[],
-  allPlayers: Player[],
-  history: GlobalHistory,
-): boolean {
-  for (const court of courts) {
-    for (const p1 of court.team1) {
-      for (const p2 of court.team2) {
-        const k = oppKey(p1.id, p2.id);
-        const count = history.opponentCount.get(k) ?? 0;
-        if (count > 0) {
-          // Check if either player still has an opponent they haven't faced yet
-          // (or faced fewer times). opponentCount is 0 for players who have only
-          // been partners, or who've never shared a court — both are valid
-          // unexplored opponent slots.
-          const aMin = Math.min(
-            ...allPlayers
-              .filter(p => p.id !== p1.id)
-              .map(p => history.opponentCount.get(oppKey(p1.id, p.id)) ?? 0),
-          );
-          const bMin = Math.min(
-            ...allPlayers
-              .filter(p => p.id !== p2.id)
-              .map(p => history.opponentCount.get(oppKey(p2.id, p.id)) ?? 0),
-          );
-          if (aMin < count && bMin < count) {
-            return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
-}
+function assignCourts(
+  pairs: [Player, Player][],
+  numCourts: number,
+  history: History,
+  prevOppIds: Set<string>,
+  players: Player[],
+): CourtAssignment {
+  const nPairs = pairs.length;
+  if (nPairs < 2) return { courts: [], opponentCost: 0 };
 
-function isPrematureSitOutRepeat(
-  sittingOut: Player[],
-  allPlayers: Player[],
-  history: GlobalHistory,
-): boolean {
-  // Build the eligible sit-out pool: only players who have sat out before OR are
-  // sitting out in this round. This excludes players who can never sit out (e.g.
-  // females in a mixed-mode setup where the female count exactly fills the courts),
-  // which would otherwise make every sit-out pair permanently "premature".
-  const sittingOutIds = new Set(sittingOut.map(p => p.id));
-  const eligiblePool = new Set(
-    allPlayers
-      .filter(p => sittingOutIds.has(p.id) || (history.sitOutCount.get(p.id) ?? 0) > 0)
-      .map(p => p.id),
+  const cost: number[][] = Array.from({ length: nPairs }, () =>
+    new Array(nPairs).fill(0),
   );
+  for (let i = 0; i < nPairs; i++) {
+    for (let j = i + 1; j < nPairs; j++) {
+      const c = matchupCost(pairs[i], pairs[j], history, prevOppIds);
+      cost[i][j] = c;
+      cost[j][i] = c;
+    }
+  }
 
-  for (let i = 0; i < sittingOut.length; i++) {
-    for (let j = i + 1; j < sittingOut.length; j++) {
-      const pA = sittingOut[i];
-      const pB = sittingOut[j];
-      const k = pairKey(pA.id, pB.id);
-      const count = history.sitOutTogetherCount.get(k) ?? 0;
-      if (count > 0) {
-        // Others = eligible sit-out players, excluding the two under review
-        const others = allPlayers.filter(
-          p => p.id !== pA.id && p.id !== pB.id && eligiblePool.has(p.id),
+  const matches = minCostMatchingIndices(cost);
+
+  const games = matches
+    .map(([i, j]) => ({ i, j, cost: cost[i][j] }))
+    .sort((a, b) => a.cost - b.cost);
+
+  const courts: CourtGame[] = [];
+  let courtNumber = 1;
+  let opponentCost = 0;
+  for (const g of games) {
+    if (courts.length >= numCourts) break;
+    const pairA = pairs[g.i];
+    const pairB = pairs[g.j];
+    opponentCost += g.cost;
+    courts.push({
+      courtNumber: courtNumber++,
+      team1: [pairA[0], pairA[1]],
+      team2: [pairB[0], pairB[1]],
+    });
+  }
+
+  const metThisRound = new Set<string>();
+  for (const court of courts) {
+    for (const a of court.team1) {
+      for (const b of court.team2) {
+        metThisRound.add(oppKey(a.id, b.id));
+      }
+    }
+  }
+  const n = players.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const key = oppKey(players[i].id, players[j].id);
+      if (get(history.opponentCount, key) === 0 && !metThisRound.has(key)) {
+        opponentCost += OPPONENT_NOT_MET;
+      }
+    }
+  }
+
+  return { courts, opponentCost };
+}
+
+// ─── Generate one HYBRID round ────────────────────────────────────────────────
+
+function generateHybridRound(
+  players: Player[],
+  numCourts: number,
+  history: History,
+  prevSittingOut: Player[],
+  prevPairIds: Set<string>,
+  prevOppIds: Set<string>,
+): RoundResult {
+  const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
+
+  const males = players.filter(p => p.gender === 'male');
+  const females = players.filter(p => p.gender === 'female');
+
+  const maxMixedByGender = Math.min(
+    Math.floor(males.length / 2),
+    Math.floor(females.length / 2),
+  );
+  const mixedCourts = Math.min(numCourts, maxMixedByGender);
+
+  const mixedMaleNeed = mixedCourts * 2;
+  const mixedFemaleNeed = mixedCourts * 2;
+
+  // Rank players for mixed-court selection:
+  // Primary: fewer mixed games played → gets the mixed slot first (rotation fairness)
+  // Secondary: more sit-outs → gets to play (overall fairness)
+  // Tertiary: sat out last round → play this round
+  const rankForMixed = (pool: Player[]): Player[] =>
+    shuffle(pool).sort((a, b) => {
+      const ma = get(history.mixedCount, a.id);
+      const mb = get(history.mixedCount, b.id);
+      if (ma !== mb) return ma - mb;          // fewer mixed games first → gets mixed slot
+      const sa = get(history.sitOutCount, a.id);
+      const sb = get(history.sitOutCount, b.id);
+      if (sa !== sb) return sb - sa;          // more sit-outs first → gets to play
+      const la = prevSitOutIds.has(a.id) ? 1 : 0;
+      const lb = prevSitOutIds.has(b.id) ? 1 : 0;
+      return lb - la;                          // sat out last round → play this round
+    });
+
+  const rankedMales = rankForMixed(males);
+  const rankedFemales = rankForMixed(females);
+
+  const mixedMales = rankedMales.slice(0, mixedMaleNeed);
+  const mixedFemales = rankedFemales.slice(0, mixedFemaleNeed);
+  const leftoverMales = rankedMales.slice(mixedMaleNeed);
+  const leftoverFemales = rankedFemales.slice(mixedFemaleNeed);
+
+  const courts: CourtGame[] = [];
+  const seated = new Set<string>();
+
+  if (mixedCourts > 0) {
+    const mixedPlaying = [...mixedMales, ...mixedFemales];
+    const candidates = candidatePartnerMatchings(
+      mixedPlaying,
+      history,
+      prevPairIds,
+      true,
+    );
+    let bestCourts: CourtGame[] = [];
+    let bestCost = Infinity;
+    for (const pairs of candidates) {
+      const { courts: c, opponentCost } = assignCourts(
+        pairs, mixedCourts, history, prevOppIds, players,
+      );
+      if (opponentCost < bestCost) { bestCost = opponentCost; bestCourts = c; }
+    }
+    for (const court of bestCourts) {
+      courts.push(court);
+      for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
+    }
+  }
+
+  const remainingCourts = numCourts - courts.length;
+  if (remainingCourts > 0) {
+    const leftovers = [...leftoverMales, ...leftoverFemales].filter(
+      p => !seated.has(p.id),
+    );
+    const usableCourts = Math.min(remainingCourts, Math.floor(leftovers.length / 4));
+    if (usableCourts > 0) {
+      const sel = selectSitOuts(
+        leftovers,
+        leftovers.length - usableCourts * 4,
+        history,
+        prevSitOutIds,
+      );
+      const genderPlaying = sel.playing;
+      const candidates = candidatePartnerMatchings(
+        genderPlaying,
+        history,
+        prevPairIds,
+        false,
+      );
+      let bestCourts: CourtGame[] = [];
+      let bestCost = Infinity;
+      for (const pairs of candidates) {
+        const { courts: c, opponentCost } = assignCourts(
+          pairs, usableCourts, history, prevOppIds, players,
         );
-
-        // Premature if EITHER person still has an eligible partner they haven't
-        // sat out with as many times as they've sat out with each other.
-        const aHasUntapped =
-          others.length > 0 &&
-          others.some(
-            p => (history.sitOutTogetherCount.get(pairKey(pA.id, p.id)) ?? 0) < count,
-          );
-        const bHasUntapped =
-          others.length > 0 &&
-          others.some(
-            p => (history.sitOutTogetherCount.get(pairKey(pB.id, p.id)) ?? 0) < count,
-          );
-
-        if (aHasUntapped || bHasUntapped) {
-          return true;
-        }
+        if (opponentCost < bestCost) { bestCost = opponentCost; bestCourts = c; }
+      }
+      let n = courts.length + 1;
+      for (const court of bestCourts) {
+        courts.push({ ...court, courtNumber: n++ });
+        for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
       }
     }
   }
-  return false;
+
+  const sitting = players.filter(p => !seated.has(p.id));
+  return { courts, sittingOut: sitting };
 }
 
 // ─── Generate one round ───────────────────────────────────────────────────────
@@ -474,128 +520,112 @@ interface RoundResult {
 function generateOneRound(
   players: Player[],
   numCourts: number,
-  history: GlobalHistory,
+  history: History,
   isMixed: boolean,
   allowSameGender: boolean,
   prevSittingOut: Player[],
-  prevRoundPairIds: Set<string>,
+  prevPairIds: Set<string>,
+  prevOppIds: Set<string>,
 ): RoundResult {
-  const allPlayers = players;
-  // 7 priority buckets (0=fallback, 6=ideal)
-  const buckets: Array<{ result: RoundResult; score: number } | null> = [
-    null, null, null, null, null, null, null,
-  ];
+  const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
 
-  for (let attempt = 0; attempt < 1000; attempt++) {
-    const courts: CourtGame[] = [];
-    let sittingOut: Player[];
+  const slots = numCourts * 4;
 
-    if (isMixed && !allowSameGender) {
-      // Strict mixed: separate M/F pools, every pair must be 1M + 1F.
-      const males = players.filter(p => p.gender === 'male');
-      const females = players.filter(p => p.gender === 'female');
-      const shuffledMales = weightedShuffle(males, history);
-      const shuffledFemales = weightedShuffle(females, history);
+  let playing: Player[];
+  let sitting: Player[];
 
-      const playingMales = shuffledMales.slice(0, numCourts * 2);
-      const playingFemales = shuffledFemales.slice(0, numCourts * 2);
-      sittingOut = [
-        ...shuffledMales.slice(numCourts * 2),
-        ...shuffledFemales.slice(numCourts * 2),
-      ];
+  if (isMixed && !allowSameGender) {
+    const males = players.filter(p => p.gender === 'male');
+    const females = players.filter(p => p.gender === 'female');
 
-      for (let c = 0; c < numCourts; c++) {
-        const group = [
-          playingMales[c * 2],
-          playingMales[c * 2 + 1],
-          playingFemales[c * 2],
-          playingFemales[c * 2 + 1],
-        ];
-        const [team1, team2] = bestMixedSplit(group, history);
-        courts.push({ courtNumber: c + 1, team1, team2 });
-      }
-    } else {
-      // Gender-based mode OR flexible mixed (allowSameGender=true):
-      // single combined pool, any pairing allowed. Players still carry their
-      // gender attribute so the table can display ♂/♀ indicators.
-      const shuffled = weightedShuffle(players, history);
-      const playing = shuffled.slice(0, numCourts * 4);
-      sittingOut = shuffled.slice(numCourts * 4);
+    const maleSitOut = Math.max(0, males.length - numCourts * 2);
+    const femaleSitOut = Math.max(0, females.length - numCourts * 2);
 
-      for (let c = 0; c < numCourts; c++) {
-        const group = playing.slice(c * 4, c * 4 + 4);
-        const [team1, team2] = bestGenericSplit(group, history);
-        courts.push({ courtNumber: c + 1, team1, team2 });
-      }
-    }
+    const m = selectSitOuts(males, maleSitOut, history, prevSitOutIds);
+    const f = selectSitOuts(females, femaleSitOut, history, prevSitOutIds);
 
-    const score = scoreAssignment(courts, sittingOut, history, allPlayers, prevSittingOut);
+    playing = [...m.playing, ...f.playing];
+    sitting = [...m.sitting, ...f.sitting];
+  } else {
+    const numSitOut = Math.max(0, players.length - slots);
+    const sel = selectSitOuts(players, numSitOut, history, prevSitOutIds);
+    playing = sel.playing;
+    sitting = sel.sitting;
+  }
 
-    // Bucket 0: always store fallback
-    if (!buckets[0] || score > buckets[0].score) {
-      buckets[0] = { result: { courts, sittingOut }, score };
-    }
+  const restrictCrossGender = isMixed && !allowSameGender;
 
-    // Bucket 1: sit-out is fair.
-    // *** Checked FIRST among hard constraints ***
-    // Pair-diversity checks (buckets 2 & 3) must never be allowed to cascade
-    // and block fairness. Example: with 5 players (3M+2F), 1 court, after 3
-    // rounds where only males have sat out, every possible playing group for
-    // the remaining fair candidates (F1 or F2 sitting out) triggers a premature
-    // pair repeat — because F1/F2 have now played with everyone. If fairness
-    // were downstream of pair diversity, bucket 3 would always be empty and we
-    // would fall back to bucket 2 with an unfair (male) sit-out.
-    if (isSitOutUnfair(sittingOut, allPlayers, history, isMixed, allowSameGender)) continue;
-    if (!buckets[1] || score > buckets[1].score) {
-      buckets[1] = { result: { courts, sittingOut }, score };
-    }
+  const candidates = candidatePartnerMatchings(
+    playing,
+    history,
+    prevPairIds,
+    restrictCrossGender,
+  );
 
-    // Bucket 2: also no consecutive pair
-    if (isConsecutivePair(courts, prevRoundPairIds)) continue;
-    if (!buckets[2] || score > buckets[2].score) {
-      buckets[2] = { result: { courts, sittingOut }, score };
-    }
+  let bestCourts: CourtGame[] = [];
+  let bestOpponentCost = Infinity;
 
-    // Bucket 3: also no premature pair repeat
-    if (isPrematurePairRepeat(courts, allPlayers, history, isMixed, allowSameGender)) continue;
-    if (!buckets[3] || score > buckets[3].score) {
-      buckets[3] = { result: { courts, sittingOut }, score };
-    }
-
-    // Bucket 4: also no premature opponent repeat.
-    // Ensures a player does not face the same opponent again while there are
-    // still opponents they haven't played against yet.
-    if (isPrematureOpponentRepeat(courts, allPlayers, history)) continue;
-    if (!buckets[4] || score > buckets[4].score) {
-      buckets[4] = { result: { courts, sittingOut }, score };
-    }
-
-    // Bucket 5: also no consecutive sit-out (no player sits out twice in a row).
-    // Checked BEFORE premature-sit-out-repeat: in certain combinations (e.g.
-    // 12 players, 2 courts) it becomes mathematically impossible to avoid a
-    // sit-out pair repeat after the first cycle, which would otherwise
-    // permanently block this bucket and leave consecutive sit-outs unguarded.
-    const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
-    const hasConsecutiveSitOut = sittingOut.some(p => prevSitOutIds.has(p.id));
-    if (hasConsecutiveSitOut) continue;
-    if (!buckets[5] || score > buckets[5].score) {
-      buckets[5] = { result: { courts, sittingOut }, score };
-    }
-
-    // Bucket 6: also no premature sit-out repeat (nice-to-have on top of above)
-    if (isPrematureSitOutRepeat(sittingOut, allPlayers, history)) continue;
-    if (!buckets[6] || score > buckets[6].score) {
-      buckets[6] = { result: { courts, sittingOut }, score };
+  for (const pairs of candidates) {
+    const { courts, opponentCost } = assignCourts(
+      pairs,
+      numCourts,
+      history,
+      prevOppIds,
+      players,
+    );
+    if (opponentCost < bestOpponentCost) {
+      bestOpponentCost = opponentCost;
+      bestCourts = courts;
     }
   }
 
-  // Return best from highest priority non-null bucket
-  for (let i = 6; i >= 0; i--) {
-    if (buckets[i]) return buckets[i]!.result;
+  const courts = bestCourts;
+
+  const seated = new Set<string>();
+  for (const court of courts) {
+    for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
+  }
+  const extraSit = playing.filter(p => !seated.has(p.id));
+  if (extraSit.length > 0) sitting = [...sitting, ...extraSit];
+
+  return { courts, sittingOut: sitting };
+}
+
+// ─── History update ────────────────────────────────────────────────────────
+
+function updateHistory(
+  courts: CourtGame[],
+  sittingOut: Player[],
+  history: History,
+): void {
+  for (const court of courts) {
+    const all = [...court.team1, ...court.team2];
+    for (const p of all) inc(history.playCount, p.id);
+
+    // Track mixed-court participation: increment mixedCount for all players
+    // in any court that has at least one male and one female player.
+    const isMixedCourt =
+      all.some(p => p.gender === 'male') && all.some(p => p.gender === 'female');
+    if (isMixedCourt) {
+      for (const p of all) inc(history.mixedCount, p.id);
+    }
+
+    for (const team of [court.team1, court.team2]) {
+      for (let i = 0; i < team.length; i++) {
+        for (let j = i + 1; j < team.length; j++) {
+          inc(history.pairCount, pairKey(team[i].id, team[j].id));
+        }
+      }
+    }
+
+    for (const a of court.team1) {
+      for (const b of court.team2) {
+        inc(history.opponentCount, oppKey(a.id, b.id));
+      }
+    }
   }
 
-  // Should never reach here, but safety fallback
-  return buckets[0]!.result;
+  for (const p of sittingOut) inc(history.sitOutCount, p.id);
 }
 
 // ─── Validate setup ───────────────────────────────────────────────────────────
@@ -610,14 +640,12 @@ export function validateSetup(
 
   if (rosterType === 'mixed') {
     if (allowSameGender) {
-      // Flexible mixed: only requires enough total players (same as gender-based).
       if (players.length < numCourts * 4) {
         errors.push(
           `Need at least ${numCourts * 4} players for ${numCourts} court${numCourts > 1 ? 's' : ''} (have ${players.length}).`,
         );
       }
     } else {
-      // Strict mixed: need at least numCourts * 2 of each gender.
       const males = players.filter(p => p.gender === 'male').length;
       const females = players.filter(p => p.gender === 'female').length;
       if (males < numCourts * 2) {
@@ -651,39 +679,205 @@ export function generateRoster(
   rosterType: RosterType,
   sessionName: string,
   allowSameGender = false,
+  partnerMode: PartnerMode = 'strict',
 ): RosterData {
   const history = makeHistory(players);
   const isMixed = rosterType === 'mixed';
   const rounds: Round[] = [];
+
   let prevSittingOut: Player[] = [];
-  let prevRoundPairIds = new Set<string>();
+  let prevPairIds = new Set<string>();
+  let prevOppIds = new Set<string>();
 
   for (let r = 0; r < numRounds; r++) {
-    const { courts, sittingOut } = generateOneRound(
-      players,
-      numCourts,
-      history,
-      isMixed,
-      allowSameGender,
-      prevSittingOut,
-      prevRoundPairIds,
-    );
+    const useHybrid =
+      partnerMode === 'hybrid' &&
+      players.some(p => p.gender === 'male') &&
+      players.some(p => p.gender === 'female');
+
+    const { courts, sittingOut } = useHybrid
+      ? generateHybridRound(
+          players,
+          numCourts,
+          history,
+          prevSittingOut,
+          prevPairIds,
+          prevOppIds,
+        )
+      : generateOneRound(
+          players,
+          numCourts,
+          history,
+          isMixed,
+          allowSameGender,
+          prevSittingOut,
+          prevPairIds,
+          prevOppIds,
+        );
 
     rounds.push({ roundNumber: r + 1, courts, sittingOut });
     updateHistory(courts, sittingOut, history);
 
     prevSittingOut = sittingOut;
-    prevRoundPairIds = new Set<string>();
+    prevPairIds = new Set<string>();
+    prevOppIds = new Set<string>();
     for (const court of courts) {
       for (const team of [court.team1, court.team2]) {
         for (let i = 0; i < team.length; i++) {
           for (let j = i + 1; j < team.length; j++) {
-            prevRoundPairIds.add(pairKey(team[i].id, team[j].id));
+            prevPairIds.add(pairKey(team[i].id, team[j].id));
           }
+        }
+      }
+      for (const a of court.team1) {
+        for (const b of court.team2) {
+          prevOppIds.add(oppKey(a.id, b.id));
         }
       }
     }
   }
 
-  return { rounds, rosterType, allPlayers: players, numCourts, sessionName, allowSameGender };
+  return { rounds, rosterType, partnerMode, allPlayers: players, numCourts, sessionName, allowSameGender };
+}
+
+// ─── Roster verification (for tests & diagnostics) ──────────────────────────
+
+export interface RosterStats {
+  partnerCounts: Map<string, number>;
+  opponentCounts: Map<string, number>;
+  sitOutCounts: Map<string, number>;
+  playCounts: Map<string, number>;
+
+  partnerMin: number;
+  partnerMax: number;
+  partnerSpread: number;
+
+  opponentMin: number;
+  opponentMax: number;
+  opponentSpread: number;
+
+  sitOutMin: number;
+  sitOutMax: number;
+  sitOutSpread: number;
+
+  backToBackSitOut: string[];
+  backToBackPartner: string[];
+  backToBackOpponent: string[];
+}
+
+export function verifyRoster(
+  data: RosterData,
+  eligiblePairKeys?: Set<string>,
+  eligibleOppKeys?: Set<string>,
+): RosterStats {
+  const partnerCounts = new Map<string, number>();
+  const opponentCounts = new Map<string, number>();
+  const sitOutCounts = new Map<string, number>();
+  const playCounts = new Map<string, number>();
+
+  for (const p of data.allPlayers) {
+    sitOutCounts.set(p.id, 0);
+    playCounts.set(p.id, 0);
+  }
+
+  const backToBackSitOut: string[] = [];
+  const backToBackPartner: string[] = [];
+  const backToBackOpponent: string[] = [];
+
+  let prevSitOut = new Set<string>();
+  let prevPartners = new Set<string>();
+  let prevOpps = new Set<string>();
+
+  for (const round of data.rounds) {
+    const curSitOut = new Set<string>();
+    const curPartners = new Set<string>();
+    const curOpps = new Set<string>();
+
+    for (const p of round.sittingOut) {
+      curSitOut.add(p.id);
+      inc(sitOutCounts, p.id);
+      if (prevSitOut.has(p.id)) backToBackSitOut.push(p.id);
+    }
+
+    for (const court of round.courts) {
+      const all = [...court.team1, ...court.team2];
+      for (const p of all) inc(playCounts, p.id);
+
+      for (const team of [court.team1, court.team2]) {
+        for (let i = 0; i < team.length; i++) {
+          for (let j = i + 1; j < team.length; j++) {
+            const key = pairKey(team[i].id, team[j].id);
+            inc(partnerCounts, key);
+            curPartners.add(key);
+            if (prevPartners.has(key)) backToBackPartner.push(key);
+          }
+        }
+      }
+
+      for (const a of court.team1) {
+        for (const b of court.team2) {
+          const key = oppKey(a.id, b.id);
+          inc(opponentCounts, key);
+          curOpps.add(key);
+          if (prevOpps.has(key)) backToBackOpponent.push(key);
+        }
+      }
+    }
+
+    prevSitOut = curSitOut;
+    prevPartners = curPartners;
+    prevOpps = curOpps;
+  }
+
+  const spread = (
+    counts: Map<string, number>,
+    eligible?: Set<string>,
+  ): [number, number] => {
+    let min = Infinity;
+    let max = 0;
+    if (eligible && eligible.size > 0) {
+      for (const key of eligible) {
+        const v = counts.get(key) ?? 0;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    } else {
+      for (const v of counts.values()) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (min === Infinity) min = 0;
+    return [min, max];
+  };
+
+  const [partnerMin, partnerMax] = spread(partnerCounts, eligiblePairKeys);
+  const [opponentMin, opponentMax] = spread(opponentCounts, eligibleOppKeys);
+
+  let sitOutMin = Infinity;
+  let sitOutMax = 0;
+  for (const v of sitOutCounts.values()) {
+    if (v < sitOutMin) sitOutMin = v;
+    if (v > sitOutMax) sitOutMax = v;
+  }
+  if (sitOutMin === Infinity) sitOutMin = 0;
+
+  return {
+    partnerCounts,
+    opponentCounts,
+    sitOutCounts,
+    playCounts,
+    partnerMin,
+    partnerMax,
+    partnerSpread: partnerMax - partnerMin,
+    opponentMin,
+    opponentMax,
+    opponentSpread: opponentMax - opponentMin,
+    sitOutMin,
+    sitOutMax,
+    sitOutSpread: sitOutMax - sitOutMin,
+    backToBackSitOut,
+    backToBackPartner,
+    backToBackOpponent,
+  };
 }

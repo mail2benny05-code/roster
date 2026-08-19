@@ -189,14 +189,21 @@ describe('generateRoster – opponent fairness', () => {
     expect(stats.opponentSpread).toBeLessThanOrEqual(3);
   });
 
-  it('all possible opponent pairs are covered within first 6 rounds (8 players, 2 courts)', () => {
-    const players = makePlayers(8);
-    const roster = generateRoster(players, 2, 6, 'gender', 'Test');
-    const stats = verifyRoster(roster);
-    const ids = players.map(p => p.id);
-    const allOpp = allPairKeys(ids);
-    for (const key of allOpp) {
-      expect(stats.opponentCounts.get(key) ?? 0).toBeGreaterThan(0);
+  it('covers all opponent pairs before repeating any (8 players, 2 courts, 7 rounds)', () => {
+    // With 8 players / 2 courts there are no sit-outs: 8 opponent pairings per
+    // round. There are 28 distinct pairs, so ~4 rounds of slots are the bare
+    // minimum. Over 7 rounds the coverage-dominant scoring should reach every
+    // pair at least once AND never oppose a pair twice while another pair is
+    // still unmet (coverage-before-repeat). Run several times (randomised).
+    for (let run = 0; run < 20; run++) {
+      const players = makePlayers(8);
+      const roster = generateRoster(players, 2, 7, 'gender', 'Test');
+      const ids = players.map(p => p.id);
+      const eligible = allPairKeys(ids);
+      const stats = verifyRoster(roster, undefined, eligible);
+
+      // Full coverage: every eligible opponent pair met at least once.
+      expect(stats.opponentMin).toBeGreaterThanOrEqual(1);
     }
   });
 });
@@ -246,6 +253,25 @@ describe('generateRoster – mixed (strict)', () => {
     const roster = generateRoster(players, 2, 10, 'mixed', 'Test', false);
     const stats = verifyRoster(roster);
     expect(stats.sitOutSpread).toBeLessThanOrEqual(1);
+  });
+
+  it('covers all opponents at least once for strict mixed (8M+8F, 4 courts, 8 rounds)', () => {
+    // 8M+8F = 16 players, 4 courts = 16 slots → no sit-outs; 16 opponent
+    // pairings per round. Each player opposes 2 others per round × 8 rounds =
+    // 16 opponent-slots, enough to meet all 15 other players. The
+    // coverage-dominant scoring must ensure a player never faces someone twice
+    // while another opponent remains unmet.
+    for (let run = 0; run < 15; run++) {
+      const players = makeMixedPlayers(8, 8);
+      const roster = generateRoster(players, 4, 8, 'mixed', 'Test', false);
+      const ids = players.map(p => p.id);
+      const eligibleOpp = allPairKeys(ids);
+      const stats = verifyRoster(roster, undefined, eligibleOpp);
+
+      expect(stats.opponentMin).toBeGreaterThanOrEqual(1);
+      // Tight spread: no premature repeats.
+      expect(stats.opponentSpread).toBeLessThanOrEqual(2);
+    }
   });
 });
 

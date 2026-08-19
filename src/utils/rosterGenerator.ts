@@ -416,14 +416,17 @@ function generateHybridRound(
   const mixedMaleNeed = mixedCourts * 2;
   const mixedFemaleNeed = mixedCourts * 2;
 
+  // Sort descending by sit-out count so the most-rested players are picked
+  // first for the mixed courts, and the players who have played the most
+  // fall into the leftover slice (and sit out this round).
   const rankPool = (pool: Player[]): Player[] =>
     shuffle(pool).sort((a, b) => {
       const sa = get(history.sitOutCount, a.id);
       const sb = get(history.sitOutCount, b.id);
-      if (sa !== sb) return sa - sb;
+      if (sa !== sb) return sb - sa;          // higher sit-out count first → gets to play
       const la = prevSitOutIds.has(a.id) ? 1 : 0;
       const lb = prevSitOutIds.has(b.id) ? 1 : 0;
-      return la - lb;
+      return lb - la;                          // sat out last round → play this round
     });
 
   const rankedMales = rankPool(males);

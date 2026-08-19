@@ -63,13 +63,15 @@ function inc(map: Map<string, number>, key: string): void {
 const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (squared count)
 const PARTNER_BACK_TO_BACK = 1e15;         // partnered last round — effectively forbidden
 
-// Opponent cost constants (re-scaled):
-//   OPPONENT_NOT_MET      — heavy penalty for a pair that has NEVER met as opponents
-//                           (drives full coverage before any repeats occur)
-//   OPPONENT_REPEAT       — small per-repeat cost (scaled by count²) once they have met
+// Opponent cost constants:
+//   OPPONENT_NOT_MET      — penalty for a pair that is STILL unmet after this
+//                           round's courts (drives full coverage before repeats)
+//   OPPONENT_REPEAT       — per-repeat cost (scaled by count²) once they have met;
+//                           must be large enough that one repeat clearly outweighs
+//                           coverage noise
 //   OPPONENT_BACK_TO_BACK — effectively forbidden back-to-back opponent repeat
-const OPPONENT_NOT_MET = 1_000;            // penalty for a never-yet-opposed pair
-const OPPONENT_REPEAT = 1;                 // cost per prior opposing (scaled by count²)
+const OPPONENT_NOT_MET = 1_000;            // penalty per still-unmet pair after this round
+const OPPONENT_REPEAT = 1_000;             // cost per prior opposing (scaled by count²)
 const OPPONENT_BACK_TO_BACK = 100_000_000; // opposed last round — effectively forbidden
 
 // ─── Sit-out selection ──────────────────────────────────────────────────────
@@ -370,8 +372,8 @@ function candidatePartnerMatchings(
  * Opponent cost between two pairs facing each other.
  *
  * Scoring tiers (lower is better):
- *   - Never opposed:             OPPONENT_NOT_MET penalty (drives full coverage first)
- *   - Opposed before:            count² × OPPONENT_REPEAT (small, accumulates with repeats)
+ *   - Never opposed:             0 (cheapest — fresh matchups are preferred)
+ *   - Opposed before:            count² × OPPONENT_REPEAT (escalates with repeats)
  *   - Opposed last round:        add OPPONENT_BACK_TO_BACK (effectively forbidden)
  */
 function matchupCost(
@@ -385,11 +387,9 @@ function matchupCost(
     for (const b of pairB) {
       const key = oppKey(a.id, b.id);
       const count = get(history.opponentCount, key);
-      if (count === 0) {
-        cost += OPPONENT_NOT_MET;
-      } else {
-        cost += count * count * OPPONENT_REPEAT;
-      }
+      // A repeat is expensive; each additional repeat escalates steeply and is
+      // always far costlier than any fresh matchup (which costs 0 here).
+      if (count > 0) cost += count * count * OPPONENT_REPEAT;
       if (prevOppIds.has(key)) cost += OPPONENT_BACK_TO_BACK;
     }
   }
@@ -410,9 +410,11 @@ interface CourtAssignment {
  *
  * After the local per-matchup costs are summed, a global coverage penalty is
  * added: for every eligible opponent pair (across ALL players, not just those
- * playing this round) that has still never met, we add OPPONENT_NOT_MET. This
- * gives the optimiser a global view of coverage gaps so it actively steers
- * toward filling them rather than just minimising local repeat costs.
+ * playing this round) that is STILL unmet AFTER applying this round's courts,
+ * we add OPPONENT_NOT_MET. Because this depends on which courts this candidate
+ * actually plays, it varies between candidates and steers selection toward
+ * layouts that resolve the most never-met opponent pairs (full coverage before
+ * any repeat).
  *
  * Returns the courts AND the total opponent cost, so the round-level search can
  * compare this court assignment against those of other partner candidates.
@@ -460,14 +462,23 @@ function assignCourts(
   }
 
   // Global coverage penalty: count how many eligible opponent pairs across ALL
-  // players have never met. This gives the candidate-selection loop a signal
-  // that reflects the overall coverage state, not just the pairs chosen this
-  // round, so it steers toward matchings that fill the most gaps globally.
+  // players are STILL unmet AFTER applying this round's courts. Because it
+  // depends on the courts this candidate actually plays, it varies between
+  // candidates and steers selection toward layouts that resolve the most
+  // never-met opponent pairs (full coverage before any repeat).
+  const metThisRound = new Set<string>();
+  for (const court of courts) {
+    for (const a of court.team1) {
+      for (const b of court.team2) {
+        metThisRound.add(oppKey(a.id, b.id));
+      }
+    }
+  }
   const n = players.length;
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const key = oppKey(players[i].id, players[j].id);
-      if (get(history.opponentCount, key) === 0) {
+      if (get(history.opponentCount, key) === 0 && !metThisRound.has(key)) {
         opponentCost += OPPONENT_NOT_MET;
       }
     }

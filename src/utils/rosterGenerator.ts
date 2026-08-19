@@ -62,9 +62,15 @@ function inc(map: Map<string, number>, key: string): void {
 
 const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (squared count)
 const PARTNER_BACK_TO_BACK = 1e15;         // partnered last round — effectively forbidden
-const OPPONENT_REPEAT = 1_000;             // cost per prior opposing (squared count)
-const OPPONENT_BACK_TO_BACK = 1_000_000;   // opposed last round — strongly avoided
-const OPPONENT_FIRST_MEETING_BONUS = 1;    // reward (negative cost) for a brand-new opponent pairing
+
+// Opponent cost constants (re-scaled):
+//   OPPONENT_NOT_MET      — heavy penalty for a pair that has NEVER met as opponents
+//                           (drives full coverage before any repeats occur)
+//   OPPONENT_REPEAT       — small per-repeat cost (scaled by count²) once they have met
+//   OPPONENT_BACK_TO_BACK — effectively forbidden back-to-back opponent repeat
+const OPPONENT_NOT_MET = 1_000;            // penalty for a never-yet-opposed pair
+const OPPONENT_REPEAT = 1;                 // cost per prior opposing (scaled by count²)
+const OPPONENT_BACK_TO_BACK = 100_000_000; // opposed last round — effectively forbidden
 
 // ─── Sit-out selection ──────────────────────────────────────────────────────
 
@@ -275,9 +281,6 @@ function minCostMatchingIndices(cost: number[][]): [number, number][] {
 // search (below) pick the one whose court assignment also minimises opponent
 // repeats.
 
-// Raised from 40 → 200 to surface more distinct partner-optimal matchings,
-// giving the opponent optimiser a wider pool of alternatives to find fresh
-// opponent pairings.
 const CANDIDATE_ATTEMPTS = 200;
 
 /** Total partner cost of a matching (used to compare candidates). */
@@ -364,19 +367,12 @@ function candidatePartnerMatchings(
 // ─── Court / opponent assignment ───────────────────────────────────────────
 
 /**
- * Opponent cost between two pairs facing each other. Every cross-pair pairing
- * of players is an opponent interaction.
+ * Opponent cost between two pairs facing each other.
  *
  * Scoring tiers (lower is better):
- *   - Never opposed:             subtract OPPONENT_FIRST_MEETING_BONUS (fresh matchup preferred)
- *   - Opposed before:            escalates with the SQUARE of the repeat count × OPPONENT_REPEAT
- *   - Opposed last round:        add OPPONENT_BACK_TO_BACK (strongly avoided)
- *
- * The first-meeting bonus makes fresh matchups strictly cheaper than any
- * repeat, giving the optimizer the coverage pressure it previously lacked.
- * Because OPPONENT_REPEAT (1000) >> OPPONENT_FIRST_MEETING_BONUS (1), the
- * bonus only breaks ties between otherwise-equal-cost matchups — it never
- * incorrectly trades a repeat for a fresh meeting.
+ *   - Never opposed:             OPPONENT_NOT_MET penalty (drives full coverage first)
+ *   - Opposed before:            count² × OPPONENT_REPEAT (small, accumulates with repeats)
+ *   - Opposed last round:        add OPPONENT_BACK_TO_BACK (effectively forbidden)
  */
 function matchupCost(
   pairA: [Player, Player],
@@ -390,9 +386,7 @@ function matchupCost(
       const key = oppKey(a.id, b.id);
       const count = get(history.opponentCount, key);
       if (count === 0) {
-        // Reward fresh matchups: actively prefer never-met opponents over
-        // any pairing that produces no repeat but no new meeting either.
-        cost -= OPPONENT_FIRST_MEETING_BONUS;
+        cost += OPPONENT_NOT_MET;
       } else {
         cost += count * count * OPPONENT_REPEAT;
       }
@@ -412,9 +406,13 @@ interface CourtAssignment {
  *
  * GLOBAL optimisation: build a cost matrix over the pairs (each pair is a node)
  * where cost[i][j] is the opponent cost of pair i facing pair j, then find the
- * min-cost perfect matching of pairs into courts. Global matching (rather than
- * greedy court-by-court) prevents early courts from hoarding the fresh
- * matchups and forcing later courts into premature repeats.
+ * min-cost perfect matching of pairs into courts.
+ *
+ * After the local per-matchup costs are summed, a global coverage penalty is
+ * added: for every eligible opponent pair (across ALL players, not just those
+ * playing this round) that has still never met, we add OPPONENT_NOT_MET. This
+ * gives the optimiser a global view of coverage gaps so it actively steers
+ * toward filling them rather than just minimising local repeat costs.
  *
  * Returns the courts AND the total opponent cost, so the round-level search can
  * compare this court assignment against those of other partner candidates.
@@ -424,6 +422,7 @@ function assignCourts(
   numCourts: number,
   history: History,
   prevOppIds: Set<string>,
+  players: Player[],
 ): CourtAssignment {
   const nPairs = pairs.length;
   if (nPairs < 2) return { courts: [], opponentCost: 0 };
@@ -458,6 +457,20 @@ function assignCourts(
       team1: [pairA[0], pairA[1]],
       team2: [pairB[0], pairB[1]],
     });
+  }
+
+  // Global coverage penalty: count how many eligible opponent pairs across ALL
+  // players have never met. This gives the candidate-selection loop a signal
+  // that reflects the overall coverage state, not just the pairs chosen this
+  // round, so it steers toward matchings that fill the most gaps globally.
+  const n = players.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const key = oppKey(players[i].id, players[j].id);
+      if (get(history.opponentCount, key) === 0) {
+        opponentCost += OPPONENT_NOT_MET;
+      }
+    }
   }
 
   return { courts, opponentCost };
@@ -511,10 +524,10 @@ function generateOneRound(
   const restrictCrossGender = isMixed && !allowSameGender;
 
   // Generate several partner-optimal candidate matchings, then choose the one
-  // whose court assignment also minimises opponent repeats (and maximises fresh
-  // opponent coverage via the first-meeting bonus). This JOINT search eliminates
-  // premature opponents: partner fairness stays optimal, but among all
-  // equally-optimal partner matchings we pick the best for opponents.
+  // whose court assignment also minimises opponent repeats and maximises fresh
+  // opponent coverage. This JOINT search eliminates premature opponents:
+  // partner fairness stays optimal, but among all equally-optimal partner
+  // matchings we pick the best for opponents.
   const candidates = candidatePartnerMatchings(
     playing,
     history,
@@ -526,7 +539,13 @@ function generateOneRound(
   let bestOpponentCost = Infinity;
 
   for (const pairs of candidates) {
-    const { courts, opponentCost } = assignCourts(pairs, numCourts, history, prevOppIds);
+    const { courts, opponentCost } = assignCourts(
+      pairs,
+      numCourts,
+      history,
+      prevOppIds,
+      players,
+    );
     if (opponentCost < bestOpponentCost) {
       bestOpponentCost = opponentCost;
       bestCourts = courts;

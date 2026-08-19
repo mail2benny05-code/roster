@@ -26,20 +26,24 @@ interface History {
   opponentCount: Map<string, number>;    // times two players opposed
   sitOutCount: Map<string, number>;      // times a player sat out
   playCount: Map<string, number>;        // times a player played
+  mixedCount: Map<string, number>;       // times a player played in a mixed (♂♀) court
 }
 
 function makeHistory(players: Player[]): History {
   const playCount = new Map<string, number>();
   const sitOutCount = new Map<string, number>();
+  const mixedCount = new Map<string, number>();
   for (const p of players) {
     playCount.set(p.id, 0);
     sitOutCount.set(p.id, 0);
+    mixedCount.set(p.id, 0);
   }
   return {
     pairCount: new Map(),
     opponentCount: new Map(),
     sitOutCount,
     playCount,
+    mixedCount,
   };
 }
 
@@ -416,21 +420,25 @@ function generateHybridRound(
   const mixedMaleNeed = mixedCourts * 2;
   const mixedFemaleNeed = mixedCourts * 2;
 
-  // Sort descending by sit-out count so the most-rested players are picked
-  // first for the mixed courts, and the players who have played the most
-  // fall into the leftover slice (and sit out this round).
-  const rankPool = (pool: Player[]): Player[] =>
+  // Rank players for mixed-court selection:
+  // Primary: fewer mixed games played → gets the mixed slot first (rotation fairness)
+  // Secondary: more sit-outs → gets to play (overall fairness)
+  // Tertiary: sat out last round → play this round
+  const rankForMixed = (pool: Player[]): Player[] =>
     shuffle(pool).sort((a, b) => {
+      const ma = get(history.mixedCount, a.id);
+      const mb = get(history.mixedCount, b.id);
+      if (ma !== mb) return ma - mb;          // fewer mixed games first → gets mixed slot
       const sa = get(history.sitOutCount, a.id);
       const sb = get(history.sitOutCount, b.id);
-      if (sa !== sb) return sb - sa;          // higher sit-out count first → gets to play
+      if (sa !== sb) return sb - sa;          // more sit-outs first → gets to play
       const la = prevSitOutIds.has(a.id) ? 1 : 0;
       const lb = prevSitOutIds.has(b.id) ? 1 : 0;
       return lb - la;                          // sat out last round → play this round
     });
 
-  const rankedMales = rankPool(males);
-  const rankedFemales = rankPool(females);
+  const rankedMales = rankForMixed(males);
+  const rankedFemales = rankForMixed(females);
 
   const mixedMales = rankedMales.slice(0, mixedMaleNeed);
   const mixedFemales = rankedFemales.slice(0, mixedFemaleNeed);
@@ -593,6 +601,14 @@ function updateHistory(
   for (const court of courts) {
     const all = [...court.team1, ...court.team2];
     for (const p of all) inc(history.playCount, p.id);
+
+    // Track mixed-court participation: increment mixedCount for all players
+    // in any court that has at least one male and one female player.
+    const isMixedCourt =
+      all.some(p => p.gender === 'male') && all.some(p => p.gender === 'female');
+    if (isMixedCourt) {
+      for (const p of all) inc(history.mixedCount, p.id);
+    }
 
     for (const team of [court.team1, court.team2]) {
       for (let i = 0; i < team.length; i++) {

@@ -223,8 +223,8 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
       return;
     }
 
-    // Step 2: fairness check
-    checkFairnessAndGenerate(false, 'strict');
+    // Step 2: fairness check — pass the patched players explicitly.
+    checkFairnessAndGenerate(false, 'strict', safePlayers);
   }
 
   /** Called after the imbalance modal is confirmed (mixed mode). */
@@ -239,10 +239,14 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     checkFairnessAndGenerate(false, mode);
   }
 
-  function checkFairnessAndGenerate(allowSameGender: boolean, partnerMode: PartnerMode) {
+  function checkFairnessAndGenerate(
+    allowSameGender: boolean,
+    partnerMode: PartnerMode,
+    playersToUse: Player[] = players,
+  ) {
     setPendingAllowSameGender(allowSameGender);
     setPendingPartnerMode(partnerMode);
-    const minFair = minFairRoundsForSetup(players, numCourts, rosterType, allowSameGender);
+    const minFair = minFairRoundsForSetup(playersToUse, numCourts, rosterType, allowSameGender);
     if (minFair > 1 && numRounds % minFair !== 0) {
       const next = Math.ceil(numRounds / minFair) * minFair;
       const prev = Math.floor(numRounds / minFair) * minFair;
@@ -250,16 +254,21 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
       setShowFairnessModal(true);
       return;
     }
-    doGenerate(numRounds, allowSameGender, partnerMode);
+    doGenerate(numRounds, allowSameGender, partnerMode, playersToUse);
   }
 
-  function doGenerate(rounds: number, allowSameGender: boolean, partnerMode: PartnerMode) {
+  function doGenerate(
+    rounds: number,
+    allowSameGender: boolean,
+    partnerMode: PartnerMode,
+    playersToUse: Player[] = players,
+  ) {
     onGenerate({
       rosterType,
       partnerMode,
       numCourts,
       numRounds: rounds,
-      players,
+      players: playersToUse,
       sessionName,
       allowSameGender,
       trackGender,

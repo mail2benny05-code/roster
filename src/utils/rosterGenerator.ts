@@ -518,18 +518,6 @@ function generateOneRound(
 ): RoundResult {
   const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
 
-  // ── Diagnostic log ──────────────────────────────────────────────────────────
-  console.log('[ONE-ROUND]',
-    'isMixed', isMixed,
-    'allowSameGender', allowSameGender,
-    'restrict', isMixed && !allowSameGender,
-    'M', players.filter(p => p.gender === 'male').length,
-    'F', players.filter(p => p.gender === 'female').length,
-    'noGender', players.filter(p => !p.gender).length,
-    'total', players.length,
-  );
-  // ───────────────────────────────────────────────────────────────────────────
-
   const slots = numCourts * 4;
 
   let playing: Player[];

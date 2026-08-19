@@ -207,36 +207,37 @@
 .roster-th,
 .roster-td {
   padding: 8px 6px;
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
   vertical-align: middle;
+  font-weight: 500;
 }
 
 .roster-round-number {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .roster-session-title {
-  font-size: 22px;
-  font-weight: 800;
-  color: #1e1b4b;
+  font-size: 18px;
+  font-weight: 700;
+  color: #334155;
   line-height: 1.2;
 }
 
 .roster-badge {
   display: inline-block;
-  font-size: 11px;
-  padding: 3px 10px;
+  font-size: 10px;
+  padding: 2px 8px;
   border-radius: 20px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .roster-player-name {
-  font-size: 13px;
-  font-weight: 600;
-  padding: 5px 8px;
-  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 6px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -244,7 +245,7 @@
 }
 
 .roster-player-name sup {
-  font-size: 10px;
+  font-size: 9px;
   margin-left: 2px;
 }
 
@@ -253,16 +254,13 @@
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .roster-footer-players {
   display: flex;
   gap: 10px;
   flex: 1;
-}
-
-.roster-footer-legend {
-  min-width: 100px;
 }
 
 .roster-player-panel {
@@ -272,10 +270,11 @@
 }
 
 .roster-date {
-  margin-top: 10px;
+  margin-top: 12px;
   font-size: 10px;
-  color: #9ca3af;
+  color: #94a3b8;
   text-align: right;
+  width: 100%;
 }
 
 /* ── Mobile adjustments ── */
@@ -291,26 +290,26 @@
   }
 
   .roster-round-number {
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .roster-session-title {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   .roster-badge {
-    font-size: 9px;
-    padding: 2px 6px;
+    font-size: 8px;
+    padding: 1px 5px;
   }
 
   .roster-player-name {
     font-size: 10px;
-    padding: 3px 5px;
+    padding: 2px 4px;
     gap: 2px;
   }
 
   .roster-player-name sup {
-    font-size: 8px;
+    font-size: 7px;
   }
 
   .roster-footer {
@@ -321,16 +320,12 @@
     width: 100%;
   }
 
-  .roster-footer-legend {
-    width: 100%;
-    min-width: unset;
-  }
-
   .roster-player-panel {
     padding: 8px 10px;
   }
 
   .roster-date {
     font-size: 9px;
+    margin-top: 8px;
   }
 }

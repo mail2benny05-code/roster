@@ -6,12 +6,12 @@ interface RosterTableProps {
 }
 
 const COURT_COLORS: [string, string, string][] = [
-  ['#6d28d9', '#f5f3ff', '#4c1095'],
-  ['#0369a1', '#f0f9ff', '#075985'],
-  ['#047857', '#ecfdf5', '#065f46'],
-  ['#b45309', '#fffbeb', '#92400e'],
-  ['#be185d', '#fdf2f8', '#9d1740'],
-  ['#0891b2', '#ecfeff', '#164e63'],
+  ['#e9d5ff', '#f3e8ff', '#6b21a8'],   // soft purple
+  ['#dbeafe', '#eff6ff', '#1e40af'],   // soft blue
+  ['#d1fae5', '#ecfdf5', '#065f46'],   // soft green
+  ['#fef3c7', '#fffbeb', '#92400e'],   // soft amber
+  ['#fce7f3', '#fdf2f8', '#9d1740'],   // soft pink
+  ['#cffafe', '#ecfeff', '#164e63'],   // soft cyan
 ];
 
 /** Order a team so a female player is listed first (mixed rosters). */
@@ -110,7 +110,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
       className="roster-table-container"
       style={{
         background: '#ffffff',
-        fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+        fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
         borderRadius: 14,
         boxSizing: 'border-box' as const,
       }}
@@ -138,7 +138,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
             <span
               key={lbl}
               className="roster-badge"
-              style={{ background: '#ede9fe', color: '#6d28d9' }}
+              style={{ background: '#f1f5f9', color: '#475569' }}
             >
               {lbl}
             </span>
@@ -159,8 +159,8 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
               <th
                 className="roster-th"
                 style={{
-                  background: '#1e1b4b',
-                  color: '#a78bfa',
+                  background: '#f1f5f9',
+                  color: '#334155',
                   position: 'sticky',
                   left: 0,
                   zIndex: 3,
@@ -170,15 +170,15 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                 Game
               </th>
               {Array.from({ length: numCourts }).map((_, ci) => {
-                const [headerBg] = COURT_COLORS[ci % COURT_COLORS.length];
+                const [headerBg, , textColor] = COURT_COLORS[ci % COURT_COLORS.length];
                 return (
                   <th
                     key={ci}
                     className="roster-th"
                     style={{
                       background: headerBg,
-                      color: '#ffffff',
-                      borderLeft: '1px solid rgba(255,255,255,0.2)',
+                      color: textColor,
+                      borderLeft: '1px solid rgba(0,0,0,0.05)',
                     }}
                   >
                     Court {ci + 1}
@@ -189,9 +189,9 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                 <th
                   className="roster-th"
                   style={{
-                    background: '#475569',
-                    color: '#e2e8f0',
-                    borderLeft: '1px solid rgba(255,255,255,0.2)',
+                    background: '#e2e8f0',
+                    color: '#475569',
+                    borderLeft: '1px solid rgba(0,0,0,0.05)',
                   }}
                 >
                   Sit Out
@@ -207,9 +207,9 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
                   <td
                     className="roster-td roster-round-number"
                     style={{
-                      background: '#1e1b4b',
-                      color: '#e0e7ff',
-                      borderTop: '1px solid rgba(255,255,255,0.08)',
+                      background: '#f8fafc',
+                      color: '#334155',
+                      borderTop: '1px solid #e2e8f0',
                       position: 'sticky',
                       left: 0,
                       zIndex: 1,
@@ -271,19 +271,7 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
             <PlayerPanel title="Players" players={allPlayers} accentColor="#6d28d9" bgColor="#f5f3ff" showGender={false} />
           )}
         </div>
-        <div className="roster-footer-legend">
-          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 6 }}>Courts</div>
-          {Array.from({ length: numCourts }).map((_, ci) => {
-            const [headerBg] = COURT_COLORS[ci % COURT_COLORS.length];
-            return (
-              <div key={ci} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <div style={{ width: 12, height: 12, borderRadius: 3, background: headerBg, flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: '#374151' }}>Court {ci + 1}</span>
-              </div>
-            );
-          })}
-          <div className="roster-date">{today}</div>
-        </div>
+        <div className="roster-date">{today}</div>
       </div>
     </div>
   );

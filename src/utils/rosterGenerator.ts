@@ -52,39 +52,16 @@ function inc(map: Map<string, number>, key: string): void {
 }
 
 // ─── Cost scale constants ────────────────────────────────────────────────────
-//
-// Tiers (strictly ordered, no overlap):
-//
-//   PARTNER_BACK_TO_BACK  (1e15)  — absolutely forbidden back-to-back partner
-//   OPPONENT_BACK_TO_BACK (1e8)   — absolutely forbidden back-to-back opponent
-//   PARTNER_REPEAT        (1e9)   — each prior partnering (scaled by count²)
-//   OPPONENT_NOT_MET      (1e5)   — coverage: unmet pair after this round
-//   OPPONENT_REPEAT       (1)     — fine-grained spread (scaled by count²)
-//
-// Coverage (OPPONENT_NOT_MET) strictly dominates repeat-spread (OPPONENT_REPEAT),
-// so the optimizer exhausts all unmet pairs before repeating anyone.
-// Back-to-back penalties dominate everything else, so they are never violated.
 
-const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (scaled by count²)
-const PARTNER_BACK_TO_BACK = 1e15;         // partnered last round — effectively forbidden
+const PARTNER_REPEAT = 1_000_000_000;
+const PARTNER_BACK_TO_BACK = 1e15;
 
-const OPPONENT_REPEAT = 1;                 // fine-grained spread: cost per prior opposing (scaled by count²)
-const OPPONENT_NOT_MET = 100_000;          // coverage: dominates any realistic repeat-spread accumulation
-const OPPONENT_BACK_TO_BACK = 100_000_000; // opposed last round — effectively forbidden
+const OPPONENT_REPEAT = 1;
+const OPPONENT_NOT_MET = 100_000;
+const OPPONENT_BACK_TO_BACK = 100_000_000;
 
 // ─── Sit-out selection ──────────────────────────────────────────────────────
 
-/**
- * Pick which players sit out this round from a single pool.
- *
- * Fairness rules, in strict priority:
- *   1. Prefer players with the fewest prior sit-outs.
- *   2. Never pick a player who sat out last round, unless forced (i.e. every
- *      remaining lowest-sit-out candidate also sat out last round).
- *   3. Break remaining ties randomly.
- *
- * Returns { playing, sitting }.
- */
 function selectSitOuts(
   pool: Player[],
   numSitOut: number,
@@ -98,7 +75,6 @@ function selectSitOuts(
     return { playing: [], sitting: [...pool] };
   }
 
-  // Sort candidates by (sitOutCount asc, satOutLastRound asc, random).
   const ranked = shuffle(pool).sort((a, b) => {
     const sa = get(history.sitOutCount, a.id);
     const sb = get(history.sitOutCount, b.id);
@@ -116,12 +92,6 @@ function selectSitOuts(
 
 // ─── Partner cost ─────────────────────────────────────────────────────────────
 
-/**
- * Cost of pairing two players as partners. Lower is better.
- *   - Never partnered:           0
- *   - Partnered before:          escalates with the SQUARE of the repeat count
- *   - Partnered last round:      effectively forbidden (back-to-back)
- */
 function partnerCost(
   a: Player,
   b: Player,
@@ -137,18 +107,13 @@ function partnerCost(
 
 // ─── Optimal min-cost bipartite matching (Hungarian algorithm) ────────────────
 
-/**
- * Solve the assignment problem for a square cost matrix (n x n).
- * Returns rowMatch where rowMatch[i] is the column assigned to row i.
- * O(n^3). Used for strict-mixed male↔female partner assignment.
- */
 function hungarian(cost: number[][]): number[] {
   const n = cost.length;
   if (n === 0) return [];
   const INF = Number.MAX_SAFE_INTEGER;
   const u = new Array(n + 1).fill(0);
   const v = new Array(n + 1).fill(0);
-  const p = new Array(n + 1).fill(0); // p[j] = row matched to column j
+  const p = new Array(n + 1).fill(0);
   const way = new Array(n + 1).fill(0);
 
   for (let i = 1; i <= n; i++) {
@@ -200,15 +165,6 @@ function hungarian(cost: number[][]): number[] {
 
 // ─── Generic optimal min-cost perfect matching (bitmask DP) ───────────────────
 
-/**
- * Optimal min-cost perfect matching over an even number of nodes.
- * `cost[i][j]` is the cost of matching node i with node j.
- * Returns a list of [i, j] matched index pairs.
- *
- * Exact via bitmask DP for up to 16 nodes; greedy fallback above that so it
- * never fails. Used for BOTH player-partner matching and pair-vs-pair court
- * matching (where each "node" is a partnered pair).
- */
 function minCostMatchingIndices(cost: number[][]): [number, number][] {
   const n = cost.length;
   if (n === 0) return [];
@@ -216,7 +172,7 @@ function minCostMatchingIndices(cost: number[][]): [number, number][] {
   if (n <= 16) {
     const full = (1 << n) - 1;
     const dp = new Float64Array(1 << n).fill(Infinity);
-    const choice = new Int32Array(1 << n).fill(-1); // encodes (i<<8 | j)
+    const choice = new Int32Array(1 << n).fill(-1);
     dp[0] = 0;
     for (let mask = 0; mask <= full; mask++) {
       if (dp[mask] === Infinity) continue;
@@ -272,18 +228,9 @@ function minCostMatchingIndices(cost: number[][]): [number, number][] {
 }
 
 // ─── Candidate partner matchings ─────────────────────────────────────────────
-//
-// The KEY insight behind fixing premature opponents: there are usually MANY
-// partner matchings that are equally optimal for partner fairness (e.g. many
-// different Latin-square rows). Which one we pick determines the opponent
-// structure of the round. So instead of committing to a single arbitrary
-// optimum, we generate several candidate matchings, then let the round-level
-// search (below) pick the one whose court assignment also minimises opponent
-// repeats.
 
 const CANDIDATE_ATTEMPTS = 200;
 
-/** Total partner cost of a matching (used to compare candidates). */
 function matchingPartnerCost(
   pairs: [Player, Player][],
   history: History,
@@ -294,19 +241,6 @@ function matchingPartnerCost(
   return total;
 }
 
-/**
- * Generate up to CANDIDATE_ATTEMPTS distinct partner matchings for the playing
- * set, keeping those whose partner cost is at or near the optimum.
- *
- * A small tolerance (one PARTNER_REPEAT unit) admits partner-equivalent
- * matchings that differ only in fine-grained squared-count spread — never a
- * back-to-back or a genuine extra repeat — giving the opponent optimiser more
- * reachable court layouts to complete coverage, without trading away partner
- * fairness.
- *
- * Since PARTNER_REPEAT (1e9) << PARTNER_BACK_TO_BACK (1e15), this tolerance
- * can never admit a back-to-back partner repeat.
- */
 function candidatePartnerMatchings(
   playing: Player[],
   history: History,
@@ -361,12 +295,7 @@ function candidatePartnerMatchings(
     candidates.push(pairs);
   }
 
-  // Keep matchings at (or negligibly above) the best partner cost. A small
-  // tolerance admits partner-equivalent matchings that differ only in the
-  // fine-grained squared-count spread — never a back-to-back or a genuine
-  // extra repeat — giving the opponent optimiser more reachable court layouts
-  // to complete coverage, without trading away partner fairness.
-  const tolerance = PARTNER_REPEAT; // one extra unit of squared-count spread
+  const tolerance = PARTNER_REPEAT;
   const optimal = candidates.filter(
     pairs =>
       matchingPartnerCost(pairs, history, prevPairIds) <= bestCost + tolerance,
@@ -377,14 +306,6 @@ function candidatePartnerMatchings(
 
 // ─── Court / opponent assignment ───────────────────────────────────────────
 
-/**
- * Opponent cost between two pairs facing each other.
- *
- * Scoring tiers (lower is better):
- *   - Never opposed:             0 (cheapest — fresh matchups are preferred)
- *   - Opposed before:            count² × OPPONENT_REPEAT (escalates with repeats)
- *   - Opposed last round:        add OPPONENT_BACK_TO_BACK (effectively forbidden)
- */
 function matchupCost(
   pairA: [Player, Player],
   pairB: [Player, Player],
@@ -408,24 +329,6 @@ interface CourtAssignment {
   opponentCost: number;
 }
 
-/**
- * Assign pairs to courts minimising repeat / back-to-back opponents, while
- * maximising fresh opponent coverage.
- *
- * GLOBAL optimisation: build a cost matrix over the pairs (each pair is a node)
- * where cost[i][j] is the opponent cost of pair i facing pair j, then find the
- * min-cost perfect matching of pairs into courts.
- *
- * After the local per-matchup costs are summed, a global coverage penalty is
- * added: for every eligible opponent pair (across ALL players, not just those
- * playing this round) that is STILL unmet AFTER applying this round's courts,
- * we add OPPONENT_NOT_MET. Because OPPONENT_NOT_MET >> OPPONENT_REPEAT, the
- * optimizer will always prefer meeting a new pair over avoiding a repeat —
- * ensuring full coverage before any repeats occur.
- *
- * Returns the courts AND the total opponent cost, so the round-level search can
- * compare this court assignment against those of other partner candidates.
- */
 function assignCourts(
   pairs: [Player, Player][],
   numCourts: number,
@@ -468,11 +371,6 @@ function assignCourts(
     });
   }
 
-  // Global coverage penalty: for every opponent pair across ALL players that
-  // is STILL unmet after applying this round's courts, add OPPONENT_NOT_MET.
-  // Because OPPONENT_NOT_MET (1e5) >> OPPONENT_REPEAT (1), the optimizer will
-  // always prefer meeting a new pair over avoiding a repeat, ensuring full
-  // coverage before any repeats occur.
   const metThisRound = new Set<string>();
   for (const court of courts) {
     for (const a of court.team1) {
@@ -495,11 +393,6 @@ function assignCourts(
 }
 
 // ─── Generate one HYBRID round ────────────────────────────────────────────────
-//
-// Option A: maximise strict-mixed courts (1M+1F teams), then fill remaining
-// courts with gender-based games formed from whole groups of 4 leftover
-// players. Any remainder sits out. Mixed and gender-based sub-rounds share the
-// same running history so partner/opponent/sit-out fairness stays global.
 
 function generateHybridRound(
   players: Player[],
@@ -514,18 +407,15 @@ function generateHybridRound(
   const males = players.filter(p => p.gender === 'male');
   const females = players.filter(p => p.gender === 'female');
 
-  // How many mixed courts can we run? Each needs 2M + 2F.
   const maxMixedByGender = Math.min(
     Math.floor(males.length / 2),
     Math.floor(females.length / 2),
   );
   const mixedCourts = Math.min(numCourts, maxMixedByGender);
 
-  // ── Choose who plays the mixed portion (fair sit-out within each gender) ──
   const mixedMaleNeed = mixedCourts * 2;
   const mixedFemaleNeed = mixedCourts * 2;
 
-  // Rank males/females by fairness; the top N play mixed, the rest are leftover.
   const rankPool = (pool: Player[]): Player[] =>
     shuffle(pool).sort((a, b) => {
       const sa = get(history.sitOutCount, a.id);
@@ -547,14 +437,13 @@ function generateHybridRound(
   const courts: CourtGame[] = [];
   const seated = new Set<string>();
 
-  // ── Mixed sub-round ──
   if (mixedCourts > 0) {
     const mixedPlaying = [...mixedMales, ...mixedFemales];
     const candidates = candidatePartnerMatchings(
       mixedPlaying,
       history,
       prevPairIds,
-      true, // restrict cross-gender
+      true,
     );
     let bestCourts: CourtGame[] = [];
     let bestCost = Infinity;
@@ -570,17 +459,13 @@ function generateHybridRound(
     }
   }
 
-  // ── Gender-based sub-round on remaining courts ──
   const remainingCourts = numCourts - courts.length;
   if (remainingCourts > 0) {
-    // Leftover pool = players not seated in the mixed portion.
     const leftovers = [...leftoverMales, ...leftoverFemales].filter(
       p => !seated.has(p.id),
     );
-    // Option A: only whole groups of 4 can form gender-based courts.
     const usableCourts = Math.min(remainingCourts, Math.floor(leftovers.length / 4));
     if (usableCourts > 0) {
-      // Pick the fairest 4*usableCourts leftovers to play (rest sit out).
       const sel = selectSitOuts(
         leftovers,
         leftovers.length - usableCourts * 4,
@@ -592,7 +477,7 @@ function generateHybridRound(
         genderPlaying,
         history,
         prevPairIds,
-        false, // combined pool, any pairing
+        false,
       );
       let bestCourts: CourtGame[] = [];
       let bestCost = Infinity;
@@ -602,7 +487,6 @@ function generateHybridRound(
         );
         if (opponentCost < bestCost) { bestCost = opponentCost; bestCourts = c; }
       }
-      // Re-number gender courts to continue after the mixed courts.
       let n = courts.length + 1;
       for (const court of bestCourts) {
         courts.push({ ...court, courtNumber: n++ });
@@ -635,35 +519,10 @@ function generateOneRound(
   const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
   const slots = numCourts * 4;
 
-  // ── Diagnostic logging ────────────────────────────────────────────────────
-  if (isMixed) {
-    const mCount = players.filter(p => p.gender === 'male').length;
-    const fCount = players.filter(p => p.gender === 'female').length;
-    const noGender = players.filter(p => !p.gender).length;
-    console.log(
-      '[roster] isMixed', isMixed,
-      '| allowSameGender', allowSameGender,
-      '| restrictCrossGender', isMixed && !allowSameGender,
-      '| M', mCount,
-      '| F', fCount,
-      '| noGender', noGender,
-      '| totalPlayers', players.length,
-    );
-    if (noGender > 0) {
-      console.warn(
-        '[roster] WARNING: the following players have no gender set:',
-        players.filter(p => !p.gender).map(p => p.name),
-      );
-    }
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
   let playing: Player[];
   let sitting: Player[];
 
   if (isMixed && !allowSameGender) {
-    // Strict mixed: independent male / female sit-out pools; each court needs
-    // exactly 2 males and 2 females.
     const males = players.filter(p => p.gender === 'male');
     const females = players.filter(p => p.gender === 'female');
 
@@ -675,15 +534,7 @@ function generateOneRound(
 
     playing = [...m.playing, ...f.playing];
     sitting = [...m.sitting, ...f.sitting];
-
-    console.log(
-      '[roster] strict-mixed sit-out selection:',
-      '| maleSitOut', maleSitOut, '→', m.sitting.map(p => p.name),
-      '| femaleSitOut', femaleSitOut, '→', f.sitting.map(p => p.name),
-      '| playing M', m.playing.length, 'F', f.playing.length,
-    );
   } else {
-    // Gender-based OR flexible mixed: one combined pool.
     const numSitOut = Math.max(0, players.length - slots);
     const sel = selectSitOuts(players, numSitOut, history, prevSitOutIds);
     playing = sel.playing;
@@ -692,28 +543,12 @@ function generateOneRound(
 
   const restrictCrossGender = isMixed && !allowSameGender;
 
-  // Generate several partner-optimal candidate matchings, then choose the one
-  // whose court assignment also minimises opponent repeats and maximises fresh
-  // opponent coverage. This JOINT search eliminates premature opponents:
-  // partner fairness stays optimal, but among all equally-optimal partner
-  // matchings we pick the best for opponents.
   const candidates = candidatePartnerMatchings(
     playing,
     history,
     prevPairIds,
     restrictCrossGender,
   );
-
-  // ── Log the best candidate's pairs for the first round ───────────────────
-  if (isMixed && candidates.length > 0) {
-    console.log(
-      '[roster] candidatePartnerMatchings produced', candidates.length, 'candidates',
-      '| restrictCrossGender', restrictCrossGender,
-      '| sample pairs from first candidate:',
-      candidates[0].map(([a, b]) => `${a.name}(${a.gender ?? '?'}) + ${b.name}(${b.gender ?? '?'})`),
-    );
-  }
-  // ─────────────────────────────────────────────────────────────────────────
 
   let bestCourts: CourtGame[] = [];
   let bestOpponentCost = Infinity;
@@ -734,28 +569,12 @@ function generateOneRound(
 
   const courts = bestCourts;
 
-  // Any players whose pair didn't get a court must sit out this round.
   const seated = new Set<string>();
   for (const court of courts) {
     for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
   }
   const extraSit = playing.filter(p => !seated.has(p.id));
   if (extraSit.length > 0) sitting = [...sitting, ...extraSit];
-
-  // ── Log final court assignments ───────────────────────────────────────────
-  if (isMixed) {
-    console.log(
-      '[roster] final courts:',
-      courts.map(c =>
-        `Court ${c.courtNumber}: [${c.team1.map(p => `${p.name}(${p.gender ?? '?'})`).join(' & ')}] vs [${c.team2.map(p => `${p.name}(${p.gender ?? '?'})`).join(' & ')}]`,
-      ),
-    );
-    console.log(
-      '[roster] sitting out:',
-      sitting.map(p => `${p.name}(${p.gender ?? '?'})`),
-    );
-  }
-  // ─────────────────────────────────────────────────────────────────────────
 
   return { courts, sittingOut: sitting };
 }
@@ -771,7 +590,6 @@ function updateHistory(
     const all = [...court.team1, ...court.team2];
     for (const p of all) inc(history.playCount, p.id);
 
-    // Partners.
     for (const team of [court.team1, court.team2]) {
       for (let i = 0; i < team.length; i++) {
         for (let j = i + 1; j < team.length; j++) {
@@ -780,7 +598,6 @@ function updateHistory(
       }
     }
 
-    // Opponents.
     for (const a of court.team1) {
       for (const b of court.team2) {
         inc(history.opponentCount, oppKey(a.id, b.id));
@@ -852,17 +669,6 @@ export function generateRoster(
   let prevPairIds = new Set<string>();
   let prevOppIds = new Set<string>();
 
-  console.log(
-    '[roster] generateRoster called:',
-    '| rosterType', rosterType,
-    '| isMixed', isMixed,
-    '| allowSameGender', allowSameGender,
-    '| partnerMode', partnerMode,
-    '| numCourts', numCourts,
-    '| numRounds', numRounds,
-    '| players', players.map(p => `${p.name}(${p.gender ?? 'none'})`),
-  );
-
   for (let r = 0; r < numRounds; r++) {
     const useHybrid =
       partnerMode === 'hybrid' &&
@@ -892,7 +698,6 @@ export function generateRoster(
     rounds.push({ roundNumber: r + 1, courts, sittingOut });
     updateHistory(courts, sittingOut, history);
 
-    // Record state for next round's back-to-back checks.
     prevSittingOut = sittingOut;
     prevPairIds = new Set<string>();
     prevOppIds = new Set<string>();
@@ -940,13 +745,6 @@ export interface RosterStats {
   backToBackOpponent: string[];
 }
 
-/**
- * Analyse a generated roster and return fairness statistics + rule violations.
- * `eligiblePairKeys` / `eligibleOppKeys` (optional) restrict the min/max spread
- * computation to pairings that can legally occur (e.g. male↔female partners, or
- * same-gender opponents in strict mixed), so structurally impossible pairings
- * don't skew the spread toward 0.
- */
 export function verifyRoster(
   data: RosterData,
   eligiblePairKeys?: Set<string>,

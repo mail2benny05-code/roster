@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { Player, Gender, RosterType, PartnerMode, SetupState } from '../types';
 import { validateSetup } from '../utils/rosterGenerator';
 
@@ -139,20 +139,17 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
   const maleCount = players.filter(p => p.gender === 'male').length;
   const femaleCount = players.filter(p => p.gender === 'female').length;
 
-  // When rosterType changes, sync gender fields on existing players.
-  const prevRosterTypeRef = useRef(rosterType);
-  if (prevRosterTypeRef.current !== rosterType) {
-    prevRosterTypeRef.current = rosterType;
+  // When switching TO mixed mode, ensure every existing player has a gender.
+  // Using useEffect (not render-body mutation) so the state update is reliable.
+  useEffect(() => {
     if (rosterType === 'mixed') {
-      // Ensure every player has a gender when switching to mixed.
-      setPlayers(prev =>
-        prev.map(p => ({ ...p, gender: p.gender ?? 'male' })),
-      );
+      setPlayers(prev => {
+        const needsPatch = prev.some(p => !p.gender);
+        if (!needsPatch) return prev;
+        return prev.map(p => ({ ...p, gender: p.gender ?? 'male' }));
+      });
     }
-    // When switching away from mixed we intentionally keep gender data so the
-    // user doesn't lose it if they switch back. The trackGender checkbox
-    // controls whether it's displayed / used.
-  }
+  }, [rosterType]);
 
   function addPlayer() {
     const trimmed = newName.trim();
@@ -190,23 +187,38 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
   // ── Generate flow ──────────────────────────────────────────────────────────
 
   function handleGenerate() {
-    const { valid, errors } = validateSetup(players, numCourts, rosterType);
+    // Defensively ensure all players have a gender when in mixed mode before
+    // any validation or generation runs. This guards against any edge-case
+    // where the useEffect patch hasn't flushed yet.
+    const safePlayers: Player[] =
+      rosterType === 'mixed'
+        ? players.map(p => ({ ...p, gender: p.gender ?? 'male' }))
+        : players;
+
+    const { valid, errors } = validateSetup(safePlayers, numCourts, rosterType);
     if (!valid) {
       setValidationErrors(errors);
       return;
     }
     setValidationErrors([]);
 
+    // Commit the patched players so the rest of the flow (and any modals) see
+    // the correct data.
+    setPlayers(safePlayers);
+
     // Step 1 (mixed only): imbalance warning
-    if (rosterType === 'mixed' && maleCount !== femaleCount) {
-      const minorityCount = Math.min(maleCount, femaleCount);
+    const mCount = safePlayers.filter(p => p.gender === 'male').length;
+    const fCount = safePlayers.filter(p => p.gender === 'female').length;
+
+    if (rosterType === 'mixed' && mCount !== fCount) {
+      const minorityCount = Math.min(mCount, fCount);
       setModalAllowSameGender(minorityCount === numCourts * 2);
       setShowImbalanceModal(true);
       return;
     }
 
     // Step 1 (gender-based with both genders tracked): combo vs random modal
-    if (rosterType === 'gender' && trackGender && maleCount > 0 && femaleCount > 0) {
+    if (rosterType === 'gender' && trackGender && mCount > 0 && fCount > 0) {
       setShowComboModal(true);
       return;
     }

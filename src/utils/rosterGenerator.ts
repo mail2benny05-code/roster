@@ -64,6 +64,7 @@ const PARTNER_REPEAT = 1_000_000_000;      // cost per prior partnering (squared
 const PARTNER_BACK_TO_BACK = 1e15;         // partnered last round — effectively forbidden
 const OPPONENT_REPEAT = 1_000;             // cost per prior opposing (squared count)
 const OPPONENT_BACK_TO_BACK = 1_000_000;   // opposed last round — strongly avoided
+const OPPONENT_FIRST_MEETING_BONUS = 1;    // reward (negative cost) for a brand-new opponent pairing
 
 // ─── Sit-out selection ──────────────────────────────────────────────────────
 
@@ -274,7 +275,10 @@ function minCostMatchingIndices(cost: number[][]): [number, number][] {
 // search (below) pick the one whose court assignment also minimises opponent
 // repeats.
 
-const CANDIDATE_ATTEMPTS = 40;
+// Raised from 40 → 200 to surface more distinct partner-optimal matchings,
+// giving the opponent optimiser a wider pool of alternatives to find fresh
+// opponent pairings.
+const CANDIDATE_ATTEMPTS = 200;
 
 /** Total partner cost of a matching (used to compare candidates). */
 function matchingPartnerCost(
@@ -361,13 +365,18 @@ function candidatePartnerMatchings(
 
 /**
  * Opponent cost between two pairs facing each other. Every cross-pair pairing
- * of players is an opponent interaction. Repeats are penalised with the SQUARE
- * of the repeat count and same-round-previous opponents (back-to-back) are
- * heavily penalised.
+ * of players is an opponent interaction.
  *
- * Because in strict mixed the two males on a court always oppose each other and
- * the two females always oppose each other, this naturally spreads same-gender
- * opponents when the optimiser evaluates every possible pairing of pairs.
+ * Scoring tiers (lower is better):
+ *   - Never opposed:             subtract OPPONENT_FIRST_MEETING_BONUS (fresh matchup preferred)
+ *   - Opposed before:            escalates with the SQUARE of the repeat count × OPPONENT_REPEAT
+ *   - Opposed last round:        add OPPONENT_BACK_TO_BACK (strongly avoided)
+ *
+ * The first-meeting bonus makes fresh matchups strictly cheaper than any
+ * repeat, giving the optimizer the coverage pressure it previously lacked.
+ * Because OPPONENT_REPEAT (1000) >> OPPONENT_FIRST_MEETING_BONUS (1), the
+ * bonus only breaks ties between otherwise-equal-cost matchups — it never
+ * incorrectly trades a repeat for a fresh meeting.
  */
 function matchupCost(
   pairA: [Player, Player],
@@ -380,7 +389,13 @@ function matchupCost(
     for (const b of pairB) {
       const key = oppKey(a.id, b.id);
       const count = get(history.opponentCount, key);
-      cost += count * count * OPPONENT_REPEAT;
+      if (count === 0) {
+        // Reward fresh matchups: actively prefer never-met opponents over
+        // any pairing that produces no repeat but no new meeting either.
+        cost -= OPPONENT_FIRST_MEETING_BONUS;
+      } else {
+        cost += count * count * OPPONENT_REPEAT;
+      }
       if (prevOppIds.has(key)) cost += OPPONENT_BACK_TO_BACK;
     }
   }
@@ -496,9 +511,10 @@ function generateOneRound(
   const restrictCrossGender = isMixed && !allowSameGender;
 
   // Generate several partner-optimal candidate matchings, then choose the one
-  // whose court assignment also minimises opponent repeats. This JOINT search
-  // is what eliminates premature opponents: partner fairness stays optimal, but
-  // among all equally-optimal partner matchings we pick the best for opponents.
+  // whose court assignment also minimises opponent repeats (and maximises fresh
+  // opponent coverage via the first-meeting bonus). This JOINT search eliminates
+  // premature opponents: partner fairness stays optimal, but among all
+  // equally-optimal partner matchings we pick the best for opponents.
   const candidates = candidatePartnerMatchings(
     playing,
     history,

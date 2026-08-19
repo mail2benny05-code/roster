@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import type { Player, Gender, RosterType, SetupState } from '../types';
+import { useState, useRef, useEffect } from 'react';
+import type { Player, Gender, RosterType, PartnerMode, SetupState } from '../types';
 import { validateSetup } from '../utils/rosterGenerator';
 
 // ── Fairness math helpers ─────────────────────────────────────────────────────
@@ -11,10 +11,6 @@ function lcm(a: number, b: number): number {
   return (a / gcd(a, b)) * b;
 }
 
-/**
- * Minimum number of rounds so every player ends up with the exact same number
- * of games played. Any multiple of this value is also fair.
- */
 function minFairRoundsForSetup(
   players: Player[],
   numCourts: number,
@@ -22,7 +18,6 @@ function minFairRoundsForSetup(
   allowSameGender: boolean,
 ): number {
   if (rosterType === 'mixed' && !allowSameGender) {
-    // Strict mixed: males and females rotate in separate pools.
     const males = players.filter(p => p.gender === 'male').length;
     const females = players.filter(p => p.gender === 'female').length;
     const spotsPerGender = numCourts * 2;
@@ -30,17 +25,16 @@ function minFairRoundsForSetup(
     const femaleMin = females > spotsPerGender ? females / gcd(females, spotsPerGender) : 1;
     return lcm(maleMin, femaleMin);
   }
-  // Gender-based or flexible mixed: single combined pool.
   const n = players.length;
   const spotsPerRound = numCourts * 4;
-  if (n <= spotsPerRound) return 1; // everyone plays every round — always fair
+  if (n <= spotsPerRound) return 1;
   return n / gcd(n, spotsPerRound);
 }
 
 interface FairnessHint {
   minFair: number;
-  suggestedNext: number;       // nearest multiple of minFair that is > numRounds
-  suggestedPrev: number | null; // nearest multiple of minFair that is < numRounds (null if ≤ 0)
+  suggestedNext: number;
+  suggestedPrev: number | null;
 }
 
 interface SetupPageProps {
@@ -92,44 +86,70 @@ function Counter({ label, value, min, max, onChange }: CounterProps) {
   );
 }
 
+/** Click-to-toggle gender chip used in both the add-row and the player list. */
+function GenderChip({ gender, onChange }: { gender: Gender; onChange: (g: Gender) => void }) {
+  const isMale = gender === 'male';
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(isMale ? 'female' : 'male')}
+      className={`text-xs rounded-full px-3 py-1 border font-semibold transition-colors select-none ${
+        isMale
+          ? 'bg-blue-900/40 text-blue-300 border-blue-700/50 hover:bg-blue-800/50'
+          : 'bg-pink-900/40 text-pink-300 border-pink-700/50 hover:bg-pink-800/50'
+      }`}
+    >
+      {isMale ? '♂ Male' : '♀ Female'}
+    </button>
+  );
+}
+
 export default function SetupPage({ initialState, onGenerate, onLogout, onReset, onHistory }: SetupPageProps) {
   const [sessionName, setSessionName] = useState(initialState.sessionName);
   const [rosterType, setRosterType] = useState<RosterType>(initialState.rosterType);
   const [numCourts, setNumCourts] = useState(initialState.numCourts);
   const [numRounds, setNumRounds] = useState(initialState.numRounds);
   const [players, setPlayers] = useState<Player[]>(initialState.players);
+  const [trackGender, setTrackGender] = useState<boolean>(initialState.trackGender ?? false);
 
   const [newName, setNewName] = useState('');
   const [newGender, setNewGender] = useState<Gender>('male');
   const [nameError, setNameError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  // Imbalance modal (mixed mode)
   const [showImbalanceModal, setShowImbalanceModal] = useState(false);
   const [modalAllowSameGender, setModalAllowSameGender] = useState(false);
+
+  // Combo modal (gender-based mode with both genders tracked)
+  const [showComboModal, setShowComboModal] = useState(false);
+
+  // Fairness modal
   const [showFairnessModal, setShowFairnessModal] = useState(false);
   const [pendingAllowSameGender, setPendingAllowSameGender] = useState(false);
+  const [pendingPartnerMode, setPendingPartnerMode] = useState<PartnerMode>('strict');
   const [fairnessHint, setFairnessHint] = useState<FairnessHint>({ minFair: 1, suggestedNext: 0, suggestedPrev: null });
 
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const isEditing = initialState.players.length > 0;
 
-  // When rosterType changes, add/remove gender field
-  // Use a ref to avoid calling setState inside an effect directly
-  const prevRosterTypeRef = useRef(rosterType);
-  if (prevRosterTypeRef.current !== rosterType) {
-    prevRosterTypeRef.current = rosterType;
-    setPlayers(prev =>
-      prev.map(p => {
-        if (rosterType === 'mixed') {
-          return { ...p, gender: p.gender ?? 'male' };
-        } else {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { gender: _g, ...rest } = p;
-          return rest;
-        }
-      }),
-    );
-  }
+  // Derived gender counts (only meaningful when gender is tracked)
+  const showGender = rosterType === 'mixed' || trackGender;
+  const maleCount = players.filter(p => p.gender === 'male').length;
+  const femaleCount = players.filter(p => p.gender === 'female').length;
+
+  // When switching TO mixed mode, ensure every existing player has a gender.
+  // Using useEffect (not render-body mutation) so the state update is reliable.
+  useEffect(() => {
+    if (rosterType === 'mixed') {
+      setPlayers(prev => {
+        const needsPatch = prev.some(p => !p.gender);
+        if (!needsPatch) return prev;
+        return prev.map(p => ({ ...p, gender: p.gender ?? 'male' }));
+      });
+    }
+  }, [rosterType]);
 
   function addPlayer() {
     const trimmed = newName.trim();
@@ -144,7 +164,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     const player: Player = {
       id: crypto.randomUUID(),
       name: trimmed,
-      ...(rosterType === 'mixed' ? { gender: newGender } : {}),
+      ...(showGender ? { gender: newGender } : {}),
     };
     setPlayers(prev => [...prev, player]);
     setNewName('');
@@ -164,39 +184,69 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     setPlayers(prev => prev.map(p => (p.id === id ? { ...p, gender } : p)));
   }
 
+  // ── Generate flow ──────────────────────────────────────────────────────────
+
   function handleGenerate() {
-    const { valid, errors } = validateSetup(players, numCourts, rosterType);
+    // Defensively ensure all players have a gender when in mixed mode before
+    // any validation or generation runs. This guards against any edge-case
+    // where the useEffect patch hasn't flushed yet.
+    const safePlayers: Player[] =
+      rosterType === 'mixed'
+        ? players.map(p => ({ ...p, gender: p.gender ?? 'male' }))
+        : players;
+
+    const { valid, errors } = validateSetup(safePlayers, numCourts, rosterType);
     if (!valid) {
       setValidationErrors(errors);
       return;
     }
     setValidationErrors([]);
 
-    // Step 1: imbalance warning for mixed mode
-    if (rosterType === 'mixed' && maleCount !== femaleCount) {
-      const minorityCount = Math.min(maleCount, femaleCount);
+    // Commit the patched players so the rest of the flow (and any modals) see
+    // the correct data.
+    setPlayers(safePlayers);
+
+    // Step 1 (mixed only): imbalance warning
+    const mCount = safePlayers.filter(p => p.gender === 'male').length;
+    const fCount = safePlayers.filter(p => p.gender === 'female').length;
+
+    if (rosterType === 'mixed' && mCount !== fCount) {
+      const minorityCount = Math.min(mCount, fCount);
       setModalAllowSameGender(minorityCount === numCourts * 2);
       setShowImbalanceModal(true);
       return;
     }
 
-    // Step 2: fairness check
-    checkFairnessAndGenerate(false);
+    // Step 1 (gender-based with both genders tracked): combo vs random modal
+    if (rosterType === 'gender' && trackGender && mCount > 0 && fCount > 0) {
+      setShowComboModal(true);
+      return;
+    }
+
+    // Step 2: fairness check — pass the patched players explicitly.
+    checkFairnessAndGenerate(false, 'strict', safePlayers);
   }
 
-  /** Called after the imbalance modal is confirmed. */
-  function confirmFromModal() {
+  /** Called after the imbalance modal is confirmed (mixed mode). */
+  function confirmFromImbalanceModal() {
     setShowImbalanceModal(false);
-    checkFairnessAndGenerate(modalAllowSameGender);
+    checkFairnessAndGenerate(modalAllowSameGender, 'strict');
   }
 
-  /**
-   * Check whether the current round count gives everyone equal games.
-   * Shows the fairness modal if not; otherwise generates immediately.
-   */
-  function checkFairnessAndGenerate(allowSameGender: boolean) {
+  /** Called after the combo modal — user chose hybrid or random. */
+  function confirmFromComboModal(mode: PartnerMode) {
+    setShowComboModal(false);
+    checkFairnessAndGenerate(false, mode);
+  }
+
+  function checkFairnessAndGenerate(
+    allowSameGender: boolean,
+    partnerMode: PartnerMode,
+    playersToUse: Player[] = players,
+  ) {
     setPendingAllowSameGender(allowSameGender);
-    const minFair = minFairRoundsForSetup(players, numCourts, rosterType, allowSameGender);
+    setPendingPartnerMode(partnerMode);
+    const minFair = minFairRoundsForSetup(playersToUse, numCourts, rosterType, allowSameGender);
     if (minFair > 1 && numRounds % minFair !== 0) {
       const next = Math.ceil(numRounds / minFair) * minFair;
       const prev = Math.floor(numRounds / minFair) * minFair;
@@ -204,12 +254,25 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
       setShowFairnessModal(true);
       return;
     }
-    doGenerate(numRounds, allowSameGender);
+    doGenerate(numRounds, allowSameGender, partnerMode, playersToUse);
   }
 
-  /** Final step — actually triggers the roster generation. */
-  function doGenerate(rounds: number, allowSameGender: boolean) {
-    onGenerate({ rosterType, numCourts, numRounds: rounds, players, sessionName, allowSameGender });
+  function doGenerate(
+    rounds: number,
+    allowSameGender: boolean,
+    partnerMode: PartnerMode,
+    playersToUse: Player[] = players,
+  ) {
+    onGenerate({
+      rosterType,
+      partnerMode,
+      numCourts,
+      numRounds: rounds,
+      players: playersToUse,
+      sessionName,
+      allowSameGender,
+      trackGender,
+    });
   }
 
   function handleReset() {
@@ -218,18 +281,15 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     setNumCourts(1);
     setNumRounds(5);
     setPlayers([]);
+    setTrackGender(false);
     setNewName('');
     setNameError(null);
     setValidationErrors([]);
     onReset();
   }
 
-  const maleCount = players.filter(p => p.gender === 'male').length;
-  const femaleCount = players.filter(p => p.gender === 'female').length;
   const minPlayers = rosterType === 'mixed' ? numCourts * 2 + 1 : numCourts * 4 + 1;
 
-  // When the minority gender exactly fills all court spots they can never sit out
-  // in strict mixed mode. We use this to drive the modal warning and default checkbox.
   const minorityGenderCount = Math.min(maleCount, femaleCount);
   const neverSitsOutGender: 'male' | 'female' | null =
     rosterType === 'mixed' && maleCount !== femaleCount && minorityGenderCount === numCourts * 2
@@ -321,6 +381,26 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               </button>
             ))}
           </div>
+
+          {/* "Track gender?" checkbox — only shown in gender-based mode */}
+          {rosterType === 'gender' && (
+            <label className="flex items-center gap-3 mt-4 cursor-pointer select-none group">
+              <input
+                type="checkbox"
+                checked={trackGender}
+                onChange={e => setTrackGender(e.target.checked)}
+                className="w-4 h-4 rounded accent-violet-500 cursor-pointer shrink-0"
+              />
+              <div>
+                <span className="text-slate-300 text-sm font-medium group-hover:text-white transition-colors">
+                  Track player gender
+                </span>
+                <p className="text-slate-500 text-xs mt-0.5">
+                  Enables mixed + gender-based combo scheduling when both genders are present.
+                </p>
+              </div>
+            </label>
+          )}
         </div>
 
         {/* Section 3: Courts & Rounds */}
@@ -338,7 +418,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
             Players ({players.length} added)
           </div>
 
-          {/* Add player */}
+          {/* Add player row */}
           <div className="flex flex-col gap-2 mb-3 sm:flex-row">
             <input
               ref={nameInputRef}
@@ -349,16 +429,9 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               placeholder="Player name"
               className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
             />
-            <div className="flex gap-2">
-              {rosterType === 'mixed' && (
-                <select
-                  value={newGender}
-                  onChange={e => setNewGender(e.target.value as Gender)}
-                  className="flex-1 sm:flex-none bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-violet-500"
-                >
-                  <option value="male">♂ Male</option>
-                  <option value="female">♀ Female</option>
-                </select>
+            <div className="flex gap-2 items-center">
+              {showGender && (
+                <GenderChip gender={newGender} onChange={setNewGender} />
               )}
               <button
                 onClick={addPlayer}
@@ -373,8 +446,8 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
             <p className="text-red-400 text-xs mb-2">{nameError}</p>
           )}
 
-          {/* Gender count chips (mixed mode) */}
-          {rosterType === 'mixed' && players.length > 0 && (
+          {/* Gender count chips */}
+          {showGender && players.length > 0 && (
             <div className="flex gap-2 mb-3">
               <span className="bg-blue-900/40 text-blue-300 border border-blue-700/50 text-xs px-2.5 py-1 rounded-full">
                 ♂ {maleCount} male{maleCount !== 1 ? 's' : ''}
@@ -400,19 +473,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                     onChange={e => updatePlayerName(player.id, e.target.value)}
                     className="flex-1 bg-transparent text-white text-sm focus:outline-none"
                   />
-                  {rosterType === 'mixed' && (
-                    <select
-                      value={player.gender}
-                      onChange={e => updatePlayerGender(player.id, e.target.value as Gender)}
-                      className={`text-xs rounded-full px-2 py-0.5 border focus:outline-none ${
-                        player.gender === 'male'
-                          ? 'bg-blue-900/40 text-blue-300 border-blue-700/50'
-                          : 'bg-pink-900/40 text-pink-300 border-pink-700/50'
-                      }`}
-                    >
-                      <option value="male">♂</option>
-                      <option value="female">♀</option>
-                    </select>
+                  {showGender && (
+                    <GenderChip
+                      gender={player.gender ?? 'male'}
+                      onChange={g => updatePlayerGender(player.id, g)}
+                    />
                   )}
                   <button
                     onClick={() => removePlayer(player.id)}
@@ -448,12 +513,10 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
         </button>
       </div>
 
-      {/* ── Imbalance confirmation modal ─────────────────────────────── */}
+      {/* ── Imbalance confirmation modal (mixed mode) ─────────────────────── */}
       {showImbalanceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-
-            {/* Header */}
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -467,13 +530,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               </div>
             </div>
 
-            {/* Body */}
             <p className="text-slate-300 text-sm mb-3">
               You have <span className="text-blue-400 font-semibold">♂ {maleCount} male</span> and{' '}
               <span className="text-pink-400 font-semibold">♀ {femaleCount} female</span> player{maleCount + femaleCount !== 1 ? 's' : ''}.
             </p>
 
-            {/* Strong warning when one gender will NEVER sit out in strict mode */}
             {neverSitsOutGender ? (
               <div className="bg-red-900/30 border border-red-700/50 rounded-xl p-3 mb-4 flex gap-2 items-start">
                 <svg className="w-4 h-4 text-red-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -497,7 +558,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               </p>
             )}
 
-            {/* Same-gender checkbox */}
             <label className="flex items-start gap-3 bg-slate-700/50 border border-slate-600/50 rounded-xl p-4 cursor-pointer mb-5 hover:bg-slate-700/70 transition-colors">
               <input
                 type="checkbox"
@@ -514,7 +574,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
               </div>
             </label>
 
-            {/* Buttons */}
             <div className="flex gap-3">
               <button
                 onClick={() => setShowImbalanceModal(false)}
@@ -523,7 +582,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 Cancel
               </button>
               <button
-                onClick={confirmFromModal}
+                onClick={confirmFromImbalanceModal}
                 className="flex-1 bg-violet-600 hover:bg-violet-500 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
               >
                 Generate Anyway
@@ -533,12 +592,81 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
         </div>
       )}
 
+      {/* ── Combo vs Random modal (gender-based + both genders tracked) ───── */}
+      {showComboModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-violet-500/20 rounded-xl flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-base">Partner scheduling</h2>
+                <p className="text-slate-400 text-xs mt-0.5">
+                  Both genders detected — choose a scheduling style
+                </p>
+              </div>
+            </div>
+
+            <p className="text-slate-300 text-sm mb-4">
+              You have <span className="text-blue-400 font-semibold">♂ {maleCount} male</span> and{' '}
+              <span className="text-pink-400 font-semibold">♀ {femaleCount} female</span> players.
+              How should partners be assigned?
+            </p>
+
+            <div className="space-y-3 mb-5">
+              {/* Hybrid option */}
+              <button
+                onClick={() => confirmFromComboModal('hybrid')}
+                className="w-full text-left border border-slate-600 hover:border-violet-500 hover:bg-violet-500/10 rounded-xl p-4 transition-colors group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-base">🤝</span>
+                  <span className="text-white font-semibold text-sm group-hover:text-violet-300 transition-colors">
+                    Prefer mixed pairs (♂♀)
+                  </span>
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  As many <span className="text-violet-300">♂♀</span> pairs as possible each round. Any leftover players
+                  form same-gender courts. <span className="text-slate-500">♂♂ or ♀♀ pairs only appear when the numbers don't divide evenly.</span>
+                </p>
+              </button>
+
+              {/* Random / strict option */}
+              <button
+                onClick={() => confirmFromComboModal('strict')}
+                className="w-full text-left border border-slate-600 hover:border-slate-500 hover:bg-slate-700/50 rounded-xl p-4 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-base">🎲</span>
+                  <span className="text-white font-semibold text-sm">Ignore gender entirely</span>
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  Partners are chosen purely for fairness — gender is <span className="text-amber-400 font-medium">completely ignored</span>.{' '}
+                  <span className="text-slate-500">♂♂, ♀♀, and ♂♀ pairs all appear freely.</span>{' '}
+                  Best for competitive or gender-neutral play.
+                </p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowComboModal(false)}
+              className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-2.5 rounded-xl text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Fairness / equal play-time modal ─────────────────────────────── */}
       {showFairnessModal && (() => {
         const isStrictMixed = rosterType === 'mixed' && !pendingAllowSameGender;
         const { minFair, suggestedNext, suggestedPrev } = fairnessHint;
 
-        // Per-pool imbalance detail (combined pool only)
         const n = players.length;
         const spotsPerRound = numCourts * 4;
         const totalPlay = numRounds * spotsPerRound;
@@ -546,7 +674,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
         const numHigh = totalPlay % n;
         const numLow = n - numHigh;
 
-        // Male / female detail for strict mixed
         const males = players.filter(p => p.gender === 'male').length;
         const females = players.filter(p => p.gender === 'female').length;
         const spotsPerGender = numCourts * 2;
@@ -557,7 +684,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
           ? { low: Math.floor(numRounds * spotsPerGender / females), numHigh: (numRounds * spotsPerGender) % females, n: females }
           : null;
 
-        // Alternative court counts that give a shorter fair cycle
         const maxValidCourts = isStrictMixed
           ? Math.min(Math.floor(males / 2), Math.floor(females / 2))
           : Math.floor(n / 4);
@@ -568,7 +694,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
           .sort((a, b) => a.minFair - b.minFair)
           .slice(0, 2);
 
-        // Round pills to display
         const pills: number[] = [];
         if (suggestedPrev) pills.push(suggestedPrev);
         pills.push(suggestedNext);
@@ -577,8 +702,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-
-              {/* Header */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 bg-sky-500/20 rounded-xl flex items-center justify-center shrink-0">
                   <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -594,7 +717,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 </div>
               </div>
 
-              {/* Imbalance detail */}
               {!isStrictMixed && numHigh > 0 && (
                 <div className="flex items-stretch gap-2 mb-4">
                   <div className="flex-1 bg-amber-900/30 border border-amber-700/40 rounded-xl p-3 text-center">
@@ -627,7 +749,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 </div>
               )}
 
-              {/* Min fair info */}
               <p className="text-slate-400 text-sm mb-3">
                 Equal play requires round counts that are multiples of{' '}
                 <span className="text-white font-semibold">{minFair}</span>
@@ -635,12 +756,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 {[minFair, minFair * 2, minFair * 3].filter(r => r <= 200).join(', ')}…
               </p>
 
-              {/* Round pills */}
               <div className="flex gap-2 flex-wrap mb-4">
                 {pills.map(r => (
                   <button
                     key={r}
-                    onClick={() => { setNumRounds(r); setShowFairnessModal(false); doGenerate(r, pendingAllowSameGender); }}
+                    onClick={() => { setNumRounds(r); setShowFairnessModal(false); doGenerate(r, pendingAllowSameGender, pendingPartnerMode); }}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
                       r === suggestedNext
                         ? 'bg-violet-600 hover:bg-violet-500 text-white'
@@ -652,7 +772,6 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 ))}
               </div>
 
-              {/* Court alternatives */}
               {courtAlts.length > 0 && (
                 <div className="bg-slate-700/30 rounded-xl px-3 py-2.5 mb-4">
                   <p className="text-slate-400 text-xs font-medium mb-1.5">💡 Court alternatives for shorter cycles</p>
@@ -666,16 +785,15 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
                 </div>
               )}
 
-              {/* Buttons */}
               <div className="flex gap-3">
                 <button
-                  onClick={() => { setShowFairnessModal(false); doGenerate(numRounds, pendingAllowSameGender); }}
+                  onClick={() => { setShowFairnessModal(false); doGenerate(numRounds, pendingAllowSameGender, pendingPartnerMode); }}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold py-2.5 rounded-xl text-sm transition-colors"
                 >
                   Keep {numRounds} rounds
                 </button>
                 <button
-                  onClick={() => { setNumRounds(suggestedNext); setShowFairnessModal(false); doGenerate(suggestedNext, pendingAllowSameGender); }}
+                  onClick={() => { setNumRounds(suggestedNext); setShowFairnessModal(false); doGenerate(suggestedNext, pendingAllowSameGender, pendingPartnerMode); }}
                   className="flex-1 bg-violet-600 hover:bg-violet-500 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
                 >
                   Use {suggestedNext} rounds
@@ -688,4 +806,3 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     </div>
   );
 }
-

@@ -1,4 +1,4 @@
-import type { Player, CourtGame, Round, RosterData, RosterType } from '../types';
+import type { Player, CourtGame, Round, RosterData, RosterType, PartnerMode } from '../types';
 
 // ─── Helper keys ─────────────────────────────────────────────────────────────
 
@@ -494,6 +494,127 @@ function assignCourts(
   return { courts, opponentCost };
 }
 
+// ─── Generate one HYBRID round ────────────────────────────────────────────────
+//
+// Option A: maximise strict-mixed courts (1M+1F teams), then fill remaining
+// courts with gender-based games formed from whole groups of 4 leftover
+// players. Any remainder sits out. Mixed and gender-based sub-rounds share the
+// same running history so partner/opponent/sit-out fairness stays global.
+
+function generateHybridRound(
+  players: Player[],
+  numCourts: number,
+  history: History,
+  prevSittingOut: Player[],
+  prevPairIds: Set<string>,
+  prevOppIds: Set<string>,
+): RoundResult {
+  const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
+
+  const males = players.filter(p => p.gender === 'male');
+  const females = players.filter(p => p.gender === 'female');
+
+  // How many mixed courts can we run? Each needs 2M + 2F.
+  const maxMixedByGender = Math.min(
+    Math.floor(males.length / 2),
+    Math.floor(females.length / 2),
+  );
+  const mixedCourts = Math.min(numCourts, maxMixedByGender);
+
+  // ── Choose who plays the mixed portion (fair sit-out within each gender) ──
+  const mixedMaleNeed = mixedCourts * 2;
+  const mixedFemaleNeed = mixedCourts * 2;
+
+  // Rank males/females by fairness; the top N play mixed, the rest are leftover.
+  const rankPool = (pool: Player[]): Player[] =>
+    shuffle(pool).sort((a, b) => {
+      const sa = get(history.sitOutCount, a.id);
+      const sb = get(history.sitOutCount, b.id);
+      if (sa !== sb) return sa - sb;
+      const la = prevSitOutIds.has(a.id) ? 1 : 0;
+      const lb = prevSitOutIds.has(b.id) ? 1 : 0;
+      return la - lb;
+    });
+
+  const rankedMales = rankPool(males);
+  const rankedFemales = rankPool(females);
+
+  const mixedMales = rankedMales.slice(0, mixedMaleNeed);
+  const mixedFemales = rankedFemales.slice(0, mixedFemaleNeed);
+  const leftoverMales = rankedMales.slice(mixedMaleNeed);
+  const leftoverFemales = rankedFemales.slice(mixedFemaleNeed);
+
+  const courts: CourtGame[] = [];
+  const seated = new Set<string>();
+
+  // ── Mixed sub-round ──
+  if (mixedCourts > 0) {
+    const mixedPlaying = [...mixedMales, ...mixedFemales];
+    const candidates = candidatePartnerMatchings(
+      mixedPlaying,
+      history,
+      prevPairIds,
+      true, // restrict cross-gender
+    );
+    let bestCourts: CourtGame[] = [];
+    let bestCost = Infinity;
+    for (const pairs of candidates) {
+      const { courts: c, opponentCost } = assignCourts(
+        pairs, mixedCourts, history, prevOppIds, players,
+      );
+      if (opponentCost < bestCost) { bestCost = opponentCost; bestCourts = c; }
+    }
+    for (const court of bestCourts) {
+      courts.push(court);
+      for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
+    }
+  }
+
+  // ── Gender-based sub-round on remaining courts ──
+  const remainingCourts = numCourts - courts.length;
+  if (remainingCourts > 0) {
+    // Leftover pool = players not seated in the mixed portion.
+    const leftovers = [...leftoverMales, ...leftoverFemales].filter(
+      p => !seated.has(p.id),
+    );
+    // Option A: only whole groups of 4 can form gender-based courts.
+    const usableCourts = Math.min(remainingCourts, Math.floor(leftovers.length / 4));
+    if (usableCourts > 0) {
+      // Pick the fairest 4*usableCourts leftovers to play (rest sit out).
+      const sel = selectSitOuts(
+        leftovers,
+        leftovers.length - usableCourts * 4,
+        history,
+        prevSitOutIds,
+      );
+      const genderPlaying = sel.playing;
+      const candidates = candidatePartnerMatchings(
+        genderPlaying,
+        history,
+        prevPairIds,
+        false, // combined pool, any pairing
+      );
+      let bestCourts: CourtGame[] = [];
+      let bestCost = Infinity;
+      for (const pairs of candidates) {
+        const { courts: c, opponentCost } = assignCourts(
+          pairs, usableCourts, history, prevOppIds, players,
+        );
+        if (opponentCost < bestCost) { bestCost = opponentCost; bestCourts = c; }
+      }
+      // Re-number gender courts to continue after the mixed courts.
+      let n = courts.length + 1;
+      for (const court of bestCourts) {
+        courts.push({ ...court, courtNumber: n++ });
+        for (const p of [...court.team1, ...court.team2]) seated.add(p.id);
+      }
+    }
+  }
+
+  const sitting = players.filter(p => !seated.has(p.id));
+  return { courts, sittingOut: sitting };
+}
+
 // ─── Generate one round ───────────────────────────────────────────────────────
 
 interface RoundResult {
@@ -665,6 +786,7 @@ export function generateRoster(
   rosterType: RosterType,
   sessionName: string,
   allowSameGender = false,
+  partnerMode: PartnerMode = 'strict',
 ): RosterData {
   const history = makeHistory(players);
   const isMixed = rosterType === 'mixed';
@@ -675,16 +797,30 @@ export function generateRoster(
   let prevOppIds = new Set<string>();
 
   for (let r = 0; r < numRounds; r++) {
-    const { courts, sittingOut } = generateOneRound(
-      players,
-      numCourts,
-      history,
-      isMixed,
-      allowSameGender,
-      prevSittingOut,
-      prevPairIds,
-      prevOppIds,
-    );
+    const useHybrid =
+      partnerMode === 'hybrid' &&
+      players.some(p => p.gender === 'male') &&
+      players.some(p => p.gender === 'female');
+
+    const { courts, sittingOut } = useHybrid
+      ? generateHybridRound(
+          players,
+          numCourts,
+          history,
+          prevSittingOut,
+          prevPairIds,
+          prevOppIds,
+        )
+      : generateOneRound(
+          players,
+          numCourts,
+          history,
+          isMixed,
+          allowSameGender,
+          prevSittingOut,
+          prevPairIds,
+          prevOppIds,
+        );
 
     rounds.push({ roundNumber: r + 1, courts, sittingOut });
     updateHistory(courts, sittingOut, history);
@@ -709,7 +845,7 @@ export function generateRoster(
     }
   }
 
-  return { rounds, rosterType, allPlayers: players, numCourts, sessionName, allowSameGender };
+  return { rounds, rosterType, partnerMode, allPlayers: players, numCourts, sessionName, allowSameGender };
 }
 
 // ─── Roster verification (for tests & diagnostics) ──────────────────────────

@@ -635,6 +635,29 @@ function generateOneRound(
   const prevSitOutIds = new Set(prevSittingOut.map(p => p.id));
   const slots = numCourts * 4;
 
+  // ── Diagnostic logging ────────────────────────────────────────────────────
+  if (isMixed) {
+    const mCount = players.filter(p => p.gender === 'male').length;
+    const fCount = players.filter(p => p.gender === 'female').length;
+    const noGender = players.filter(p => !p.gender).length;
+    console.log(
+      '[roster] isMixed', isMixed,
+      '| allowSameGender', allowSameGender,
+      '| restrictCrossGender', isMixed && !allowSameGender,
+      '| M', mCount,
+      '| F', fCount,
+      '| noGender', noGender,
+      '| totalPlayers', players.length,
+    );
+    if (noGender > 0) {
+      console.warn(
+        '[roster] WARNING: the following players have no gender set:',
+        players.filter(p => !p.gender).map(p => p.name),
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   let playing: Player[];
   let sitting: Player[];
 
@@ -652,6 +675,13 @@ function generateOneRound(
 
     playing = [...m.playing, ...f.playing];
     sitting = [...m.sitting, ...f.sitting];
+
+    console.log(
+      '[roster] strict-mixed sit-out selection:',
+      '| maleSitOut', maleSitOut, '→', m.sitting.map(p => p.name),
+      '| femaleSitOut', femaleSitOut, '→', f.sitting.map(p => p.name),
+      '| playing M', m.playing.length, 'F', f.playing.length,
+    );
   } else {
     // Gender-based OR flexible mixed: one combined pool.
     const numSitOut = Math.max(0, players.length - slots);
@@ -673,6 +703,17 @@ function generateOneRound(
     prevPairIds,
     restrictCrossGender,
   );
+
+  // ── Log the best candidate's pairs for the first round ───────────────────
+  if (isMixed && candidates.length > 0) {
+    console.log(
+      '[roster] candidatePartnerMatchings produced', candidates.length, 'candidates',
+      '| restrictCrossGender', restrictCrossGender,
+      '| sample pairs from first candidate:',
+      candidates[0].map(([a, b]) => `${a.name}(${a.gender ?? '?'}) + ${b.name}(${b.gender ?? '?'})`),
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   let bestCourts: CourtGame[] = [];
   let bestOpponentCost = Infinity;
@@ -700,6 +741,21 @@ function generateOneRound(
   }
   const extraSit = playing.filter(p => !seated.has(p.id));
   if (extraSit.length > 0) sitting = [...sitting, ...extraSit];
+
+  // ── Log final court assignments ───────────────────────────────────────────
+  if (isMixed) {
+    console.log(
+      '[roster] final courts:',
+      courts.map(c =>
+        `Court ${c.courtNumber}: [${c.team1.map(p => `${p.name}(${p.gender ?? '?'})`).join(' & ')}] vs [${c.team2.map(p => `${p.name}(${p.gender ?? '?'})`).join(' & ')}]`,
+      ),
+    );
+    console.log(
+      '[roster] sitting out:',
+      sitting.map(p => `${p.name}(${p.gender ?? '?'})`),
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   return { courts, sittingOut: sitting };
 }
@@ -795,6 +851,17 @@ export function generateRoster(
   let prevSittingOut: Player[] = [];
   let prevPairIds = new Set<string>();
   let prevOppIds = new Set<string>();
+
+  console.log(
+    '[roster] generateRoster called:',
+    '| rosterType', rosterType,
+    '| isMixed', isMixed,
+    '| allowSameGender', allowSameGender,
+    '| partnerMode', partnerMode,
+    '| numCourts', numCourts,
+    '| numRounds', numRounds,
+    '| players', players.map(p => `${p.name}(${p.gender ?? 'none'})`),
+  );
 
   for (let r = 0; r < numRounds; r++) {
     const useHybrid =

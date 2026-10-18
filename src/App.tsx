@@ -74,6 +74,22 @@ export default function App() {
     saveToHistory(state).catch(console.error);
   }
 
+  function handleShuffle() {
+    const state = setup;
+    const data = generateRoster(
+      state.players,
+      state.numCourts,
+      state.numRounds,
+      state.rosterType,
+      state.sessionName,
+      state.allowSameGender ?? false,
+      state.partnerMode,
+      rosterData ?? undefined,
+    );
+    setRosterData(data);
+    saveToHistory(state).catch(console.error);
+  }
+
   function handleEditSetup() {
     setPage('setup');
   }
@@ -115,6 +131,7 @@ export default function App() {
       <RosterPage
         data={rosterData}
         onEditSetup={handleEditSetup}
+        onShuffle={handleShuffle}
         onNewSchedule={handleNewSchedule}
         onLogout={handleLogout}
         onHistory={handleOpenHistory}

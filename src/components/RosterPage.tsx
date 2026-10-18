@@ -6,6 +6,7 @@ import RosterTable from './RosterTable';
 interface RosterPageProps {
   data: RosterData;
   onEditSetup: () => void;
+  onShuffle: () => void;
   onNewSchedule: () => void;
   onLogout: () => void;
   onHistory: () => void;
@@ -14,6 +15,7 @@ interface RosterPageProps {
 export default function RosterPage({
   data,
   onEditSetup,
+  onShuffle,
   onNewSchedule,
   onLogout,
   onHistory,
@@ -55,6 +57,7 @@ export default function RosterPage({
 
   // Derive a human-readable format label
   function formatLabel(): string {
+    if (data.rosterType === 'fixed') return 'Fixed Partner';
     if (data.rosterType === 'mixed') {
       return data.allowSameGender ? 'Mixed (flexible)' : 'Mixed';
     }
@@ -80,7 +83,7 @@ export default function RosterPage({
           </div>
           <span className="text-white font-bold text-lg">RallyQ</span>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="roster-page-actions flex items-center gap-2 flex-wrap">
           <button
             onClick={onHistory}
             title="View roster history"
@@ -97,6 +100,17 @@ export default function RosterPage({
             className="text-slate-400 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700/50 transition-colors"
           >
             Sign out
+          </button>
+          <button
+            onClick={onShuffle}
+            title="Generate a different full schedule with the same fairness rules"
+            className="text-slate-300 hover:text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 hover:border-violet-500 hover:bg-violet-500/10 transition-colors inline-flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+                d="M16 3h5v5m-.5-4.5L14 10m-4 4-5.5 5.5M21 16v5h-5m4.5-.5L14 14M3 8V3h5m-4.5.5L9 9m6 6 5.5 5.5" />
+            </svg>
+            Shuffle Full Roster
           </button>
           <button
             onClick={onEditSetup}

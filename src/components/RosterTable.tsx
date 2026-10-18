@@ -48,7 +48,7 @@ function NameRow({ players, showGender, textColor, bgColor }: NameRowProps) {
           {i > 0 && <span style={{ color: '#94a3b8', fontWeight: 400, margin: '0 2px' }}>&amp;</span>}
           {p.name}
           {showGender && p.gender && (
-            <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 7, marginLeft: 1 }}>
+            <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 10, marginLeft: 1 }}>
               {p.gender === 'male' ? '♂' : '♀'}
             </sup>
           )}
@@ -70,14 +70,14 @@ function PlayerPanel({ title, players, accentColor, bgColor, showGender }: Playe
   const cols = Math.min(4, Math.max(1, Math.ceil(players.length / 2)));
   return (
     <div className="roster-player-panel" style={{ background: bgColor }}>
-      <div style={{ color: accentColor, fontWeight: 700, fontSize: 10, marginBottom: 6 }}>{title}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '4px 12px' }}>
+      <div style={{ color: accentColor, fontWeight: 700, fontSize: 12, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '8px 12px' }}>
         {players.map((p, i) => (
-          <div key={p.id} style={{ fontSize: 9, color: '#374151' }}>
+          <div key={p.id} style={{ fontSize: 12, color: '#374151' }}>
             <span style={{ color: '#9ca3af', marginRight: 4 }}>{i + 1}.</span>
             {p.name}
             {showGender && p.gender && (
-              <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 7, marginLeft: 2 }}>
+              <sup style={{ color: p.gender === 'male' ? '#3b82f6' : '#ec4899', fontSize: 10, marginLeft: 2 }}>
                 {p.gender === 'male' ? '♂' : '♀'}
               </sup>
             )}
@@ -99,178 +99,86 @@ const RosterTable = forwardRef<HTMLDivElement, RosterTableProps>(function Roster
   const females = allPlayers.filter(p => p.gender === 'female');
 
   function formatLabel(): string {
+    if (rosterType === 'fixed') return 'Fixed Partner';
     if (isMixed) return data.allowSameGender ? 'Mixed (flexible)' : 'Mixed';
     if (isHybrid) return 'Gender-based (combo)';
     return 'Gender-based';
   }
 
   return (
-    <div
-      ref={ref}
-      className="roster-table-container"
-      style={{
-        background: '#ffffff',
-        fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
-        borderRadius: 14,
-        boxSizing: 'border-box' as const,
-      }}
-    >
-      {/* Header */}
-      <div
-        className="roster-header"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}
-      >
+    <div ref={ref} className="roster-table-container">
+      <div className="roster-header">
         <div>
-          <div style={{ fontSize: 9, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 2 }}>
-            Pickleball Schedule
-          </div>
-          <div className="roster-session-title">
-            {sessionName || 'Schedule'}
-          </div>
+          <div className="roster-eyebrow"><span /> RallyQ · Pickleball schedule</div>
+          <h2 className="roster-session-title">{sessionName || 'Your game plan'}</h2>
+          <div className="roster-header-date">{today}</div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, justifyContent: 'flex-end' }}>
-          {[
-            formatLabel(),
-            `${numCourts} Court${numCourts > 1 ? 's' : ''}`,
-            `${rounds.length} Rounds`,
-            `${allPlayers.length} Players`,
-          ].map(lbl => (
-            <span
-              key={lbl}
-              className="roster-badge"
-              style={{ background: '#f1f5f9', color: '#475569' }}
-            >
-              {lbl}
-            </span>
+        <div className="roster-badges">
+          {[formatLabel(), `${numCourts} Court${numCourts > 1 ? 's' : ''}`, `${rounds.length} Rounds`, `${allPlayers.length} Players`].map(label => (
+            <span key={label} className="roster-badge">{label}</span>
           ))}
         </div>
       </div>
 
-      {/* Table */}
       <div className="roster-table-wrapper">
-        <table className="roster-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <colgroup>
-            <col style={{ width: 52 }} />
-            {Array.from({ length: numCourts }).map((_, i) => <col key={i} />)}
-            {hasSitOuts && <col style={{ width: 108 }} />}
-          </colgroup>
+        <table className="roster-table" aria-label={sessionName ? `${sessionName} schedule` : 'Pickleball schedule'}>
           <thead>
             <tr>
-              <th
-                className="roster-th"
-                style={{
-                  background: '#f1f5f9',
-                  color: '#334155',
-                  position: 'sticky',
-                  left: 0,
-                  zIndex: 3,
-                  borderLeft: 'none',
-                }}
-              >
-                Game
-              </th>
-              {Array.from({ length: numCourts }).map((_, ci) => (
-                <th
-                  key={ci}
-                  className="roster-th"
-                  style={{
-                    background: '#f1f5f9',
-                    color: '#334155',
-                    borderLeft: '1px solid rgba(0,0,0,0.05)',
-                  }}
-                >
-                  Court {ci + 1}
+              <th scope="col" className="roster-th roster-game-heading">Round</th>
+              {Array.from({ length: numCourts }, (_, ci) => (
+                <th scope="col" key={ci} className="roster-th">
+                  <span className="roster-court-label">
+                    <span className="roster-court-dot" style={{ background: COURT_COLORS[ci % COURT_COLORS.length][2] }} />
+                    Court {String(ci + 1).padStart(2, '0')}
+                  </span>
                 </th>
               ))}
-              {hasSitOuts && (
-                <th
-                  className="roster-th"
-                  style={{
-                    background: '#e2e8f0',
-                    color: '#475569',
-                    borderLeft: '1px solid rgba(0,0,0,0.05)',
-                  }}
-                >
-                  Sit Out
-                </th>
-              )}
+              {hasSitOuts && <th scope="col" className="roster-th roster-rest-heading">Sit out</th>}
             </tr>
           </thead>
           <tbody>
-            {rounds.map((round, ri) => {
-              const rowBg = ri % 2 === 0 ? '#f8fafc' : '#ffffff';
-              return (
-                <tr key={round.roundNumber}>
-                  <td
-                    className="roster-td roster-round-number"
-                    style={{
-                      background: '#f8fafc',
-                      color: '#334155',
-                      borderTop: '1px solid #e2e8f0',
-                      position: 'sticky',
-                      left: 0,
-                      zIndex: 1,
-                    }}
-                  >
-                    {round.roundNumber}
-                  </td>
-                  {round.courts.map((court, ci) => {
-                    const [, tintBg, textColor] = COURT_COLORS[ci % COURT_COLORS.length];
-                    return (
-                      <td
-                        key={ci}
-                        className="roster-td"
-                        style={{
-                          background: rowBg,
-                          borderLeft: '1px solid #e2e8f0',
-                          borderTop: '1px solid #e2e8f0',
-                          padding: '6px 4px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4, alignItems: 'center' }}>
-                          <NameRow players={orderTeam(court.team1)} showGender={showGender} textColor={textColor} bgColor={tintBg} />
-                          <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>VS</span>
-                          <NameRow players={orderTeam(court.team2)} showGender={showGender} textColor={textColor} bgColor={tintBg} />
-                        </div>
-                      </td>
-                    );
-                  })}
-                  {hasSitOuts && (
-                    <td
-                      className="roster-td"
-                      style={{
-                        background: rowBg,
-                        fontSize: 9,
-                        color: '#64748b',
-                        fontStyle: 'italic',
-                        borderLeft: '1px solid #e2e8f0',
-                        borderTop: '1px solid #e2e8f0',
-                        padding: '6px 4px',
-                      }}
-                    >
-                      {round.sittingOut.length === 0 ? '—' : round.sittingOut.map(p => p.name).join(', ')}
+            {rounds.map(round => (
+              <tr key={round.roundNumber}>
+                <th scope="row" className="roster-round-number">
+                  <span>{String(round.roundNumber).padStart(2, '0')}</span>
+                </th>
+                {round.courts.map((court, ci) => {
+                  const [, tintBg, textColor] = COURT_COLORS[ci % COURT_COLORS.length];
+                  return (
+                    <td key={ci} className="roster-td">
+                      <div className="roster-matchup" style={{ background: tintBg }}>
+                        <NameRow players={orderTeam(court.team1)} showGender={showGender} textColor={textColor} bgColor="transparent" />
+                        <div className="roster-versus"><span />vs<span /></div>
+                        <NameRow players={orderTeam(court.team2)} showGender={showGender} textColor={textColor} bgColor="transparent" />
+                      </div>
                     </td>
-                  )}
-                </tr>
-              );
-            })}
+                  );
+                })}
+                {hasSitOuts && (
+                  <td className="roster-td roster-rest">
+                    {round.sittingOut.length === 0 ? <span className="roster-rest-empty">—</span> : (
+                      <div className="roster-rest-players">{round.sittingOut.map(p => <span key={p.id}>{p.name}</span>)}</div>
+                    )}
+                  </td>
+                )}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Footer */}
       <div className="roster-footer">
-        <div className="roster-footer-players" style={{ display: 'flex', gap: 10, flex: 1 }}>
+        <div className="roster-footer-players">
           {showGender && males.length > 0 && females.length > 0 ? (
             <>
-              <PlayerPanel title="♂ Male Players" players={males} accentColor="#3b82f6" bgColor="#eff6ff" showGender={true} />
-              <PlayerPanel title="♀ Female Players" players={females} accentColor="#ec4899" bgColor="#fdf2f8" showGender={true} />
+              <PlayerPanel title="♂ Male Players" players={males} accentColor="#3b82f6" bgColor="#f8fafc" showGender={true} />
+              <PlayerPanel title="♀ Female Players" players={females} accentColor="#db2777" bgColor="#f8fafc" showGender={true} />
             </>
           ) : (
-            <PlayerPanel title="Players" players={allPlayers} accentColor="#6d28d9" bgColor="#f5f3ff" showGender={false} />
+            <PlayerPanel title="Player lineup" players={allPlayers} accentColor="#6d28d9" bgColor="#f8fafc" showGender={false} />
           )}
         </div>
-        <div className="roster-date">{today}</div>
+        <div className="roster-date">Made for good games. <span>RallyQ</span></div>
       </div>
     </div>
   );

@@ -106,11 +106,60 @@ describe('generateRoster – structure', () => {
 // ─── Sit-out fairness ─────────────────────────────────────────────────────────
 
 describe('generateRoster – sit-out fairness', () => {
+  it('gives every player one sit-out before anyone sits twice (5 players, 1 court, 10 rounds)', () => {
+    for (let run = 0; run < 20; run++) {
+      const players = makeMixedPlayers(3, 2);
+      const roster = generateRoster(players, 1, 10, 'gender', 'Test');
+      const firstFiveSitters = roster.rounds
+        .slice(0, players.length)
+        .flatMap(round => round.sittingOut.map(player => player.id));
+
+      expect(firstFiveSitters).toHaveLength(players.length);
+      expect(new Set(firstFiveSitters).size).toBe(players.length);
+    }
+  });
+
+  it('rotates sit-outs through each eligible gender before repeating (3M, 3F, 1 court)', () => {
+    const players = makeMixedPlayers(3, 3);
+    const roster = generateRoster(players, 1, 9, 'mixed', 'Test');
+    const firstThreeSitters = roster.rounds.slice(0, 3).flatMap(round => round.sittingOut);
+
+    expect(firstThreeSitters.filter(player => player.gender === 'male')).toHaveLength(3);
+    expect(new Set(firstThreeSitters.filter(player => player.gender === 'male').map(player => player.id)).size).toBe(3);
+    expect(firstThreeSitters.filter(player => player.gender === 'female')).toHaveLength(3);
+    expect(new Set(firstThreeSitters.filter(player => player.gender === 'female').map(player => player.id)).size).toBe(3);
+  });
+
+  it('does not repeat a sit-out pair before both players have sat with everyone (6 players, 1 court, 20 rounds)', () => {
+    const players = makePlayers(6);
+    const roster = generateRoster(players, 1, 20, 'gender', 'Test');
+    const coSitters = new Map(players.map(player => [player.id, new Set<string>()]));
+
+    for (const round of roster.rounds) {
+      for (let i = 0; i < round.sittingOut.length; i++) {
+        for (let j = i + 1; j < round.sittingOut.length; j++) {
+          const [a, b] = [round.sittingOut[i], round.sittingOut[j]];
+          const aCoSitters = coSitters.get(a.id)!;
+          const bCoSitters = coSitters.get(b.id)!;
+          if (aCoSitters.has(b.id)) {
+            expect(aCoSitters.size).toBe(players.length - 1);
+            expect(bCoSitters.size).toBe(players.length - 1);
+          }
+          aCoSitters.add(b.id);
+          bCoSitters.add(a.id);
+        }
+      }
+    }
+  });
+
   it('sit-out counts differ by at most 1 (9 players, 2 courts, 9 rounds)', () => {
     const players = makePlayers(9);
     const roster = generateRoster(players, 2, 9, 'gender', 'Test');
     const stats = verifyRoster(roster);
     expect(stats.sitOutSpread).toBeLessThanOrEqual(1);
+
+    const firstCycleSitters = roster.rounds.flatMap(round => round.sittingOut.map(player => player.id));
+    expect(new Set(firstCycleSitters).size).toBe(players.length);
   });
 
   it('no player sits out back-to-back rounds (9 players, 2 courts, 12 rounds)', () => {
@@ -131,6 +180,53 @@ describe('generateRoster – sit-out fairness', () => {
 // ─── Partner fairness ─────────────────────────────────────────────────────────
 
 describe('generateRoster – partner fairness', () => {
+  it('shuffles the full round rotation instead of only swapping team sides', () => {
+    const players = makeMixedPlayers(3, 2);
+    const original = generateRoster(players, 1, 10, 'gender', 'Test');
+    const shuffled = generateRoster(players, 1, 10, 'gender', 'Test', false, 'strict', original);
+    const signature = (rounds: typeof original.rounds) => JSON.stringify(rounds.map(round => ({
+      courts: round.courts.map(court => [
+        court.team1.map(player => player.id).sort().join('|'),
+        court.team2.map(player => player.id).sort().join('|'),
+      ].sort().join('::')).sort(),
+      sitting: round.sittingOut.map(player => player.id).sort(),
+    })));
+
+    expect(signature(shuffled.rounds)).not.toBe(signature(original.rounds));
+    for (const roster of [original, shuffled]) {
+      const stats = verifyRoster(roster);
+      expect(stats.backToBackPartner).toHaveLength(0);
+      expect(stats.backToBackSitOut).toHaveLength(0);
+    }
+  });
+
+  it('does not repeat a partner before a player has partnered with everyone (5 players, 1 court, 10 rounds)', () => {
+    for (let run = 0; run < 20; run++) {
+      const players = makeMixedPlayers(3, 2);
+      const roster = generateRoster(players, 1, 10, 'gender', 'Test');
+      const partners = new Map(players.map(player => [player.id, new Set<string>()]));
+
+      for (const round of roster.rounds) {
+        for (const court of round.courts) {
+          for (const team of [court.team1, court.team2]) {
+            const [a, b] = team;
+            const aPartners = partners.get(a.id)!;
+            const bPartners = partners.get(b.id)!;
+            if (aPartners.has(b.id)) {
+              const schedule = roster.rounds.map(game => game.courts.map(match =>
+                `${match.team1.map(p => p.name).join('&')} vs ${match.team2.map(p => p.name).join('&')}`,
+              ).join('; ') + ` (sits: ${game.sittingOut.map(player => player.name).join('&')})`).join(' | ');
+              expect(aPartners.size, `${a.name} repeated ${b.name} too early: ${schedule}`).toBe(players.length - 1);
+              expect(bPartners.size, `${b.name} repeated ${a.name} too early: ${schedule}`).toBe(players.length - 1);
+            }
+            aPartners.add(b.id);
+            bPartners.add(a.id);
+          }
+        }
+      }
+    }
+  });
+
   it('no back-to-back partner repeats (8 players, 2 courts, 10 rounds)', () => {
     const players = makePlayers(8);
     const roster = generateRoster(players, 2, 10, 'gender', 'Test');
@@ -396,5 +492,33 @@ describe('validateSetup', () => {
     const players = makeMixedPlayers(6, 2); // 8 total, enough for 2 courts
     const result = validateSetup(players, 2, 'mixed', true);
     expect(result.valid).toBe(true);
+  });
+
+  it('requires an even player count for fixed partners', async () => {
+    const { validateSetup } = await import('./rosterGenerator');
+    const result = validateSetup(makePlayers(5), 1, 'fixed');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(error => error.includes('even number'))).toBe(true);
+  });
+});
+
+describe('generateRoster – fixed partners', () => {
+  it('keeps entry-order partners together in games and sit-outs', async () => {
+    const { generateRoster } = await import('./rosterGenerator');
+    const players = makePlayers(6);
+    const roster = generateRoster(players, 1, 12, 'fixed', 'Fixed teams');
+    for (const round of roster.rounds) {
+      const inRound = [...round.sittingOut, ...round.courts.flatMap(court => [...court.team1, ...court.team2])];
+      for (let i = 0; i < players.length; i += 2) {
+        const partnerA = players[i];
+        const partnerB = players[i + 1];
+        const aSits = round.sittingOut.some(player => player.id === partnerA.id);
+        const bSits = round.sittingOut.some(player => player.id === partnerB.id);
+        expect(aSits).toBe(bSits);
+        const aTeam = round.courts.flatMap(court => [court.team1, court.team2]).find(team => team.some(player => player.id === partnerA.id));
+        if (!aSits) expect(aTeam?.some(player => player.id === partnerB.id)).toBe(true);
+        expect(inRound.filter(player => player.id === partnerA.id)).toHaveLength(1);
+      }
+    }
   });
 });

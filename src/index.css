@@ -26,3 +26,62 @@ button { touch-action: manipulation; }
   .history-entry > button:first-of-type { flex-basis: calc(100% - 48px); }
   .history-entry > button:not(:first-of-type) { min-width: 44px; min-height: 44px; display: inline-flex; justify-content: center; align-items: center; }
 }
+
+.roster-table-container {
+  width: 100%;
+  min-width: fit-content;
+  padding: 28px;
+  box-sizing: border-box;
+  background: #fff;
+  color: #1e293b;
+  color-scheme: light;
+  border: 1px solid #e2e8f0;
+  border-radius: 24px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  box-shadow: 0 20px 60px #02061720;
+}
+
+.roster-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 26px; }
+.roster-eyebrow { display: flex; align-items: center; gap: 7px; color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; }
+.roster-eyebrow > span { width: 7px; height: 7px; background: #8b5cf6; border-radius: 50%; }
+.roster-session-title { margin: 8px 0 6px; font-size: 28px; line-height: 1.2; font-weight: 750; letter-spacing: -1px; color: #0f172a; overflow-wrap: anywhere; }
+.roster-header-date { font-size: 12px; color: #64748b; }
+.roster-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 300px; }
+.roster-badge { padding: 5px 10px; border: 1px solid #e2e8f0; border-radius: 7px; background: #f8fafc; color: #475569; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.roster-badge:first-child { background: #f5f3ff; color: #6d28d9; border-color: #ede9fe; }
+.roster-table-wrapper { border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; }
+.roster-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.roster-th { padding: 15px 12px; background: #f8fafc; color: #475569; font-size: 11px; font-weight: 650; text-align: center; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+.roster-game-heading { width: 68px; }
+.roster-court-label { display: inline-flex; align-items: center; gap: 7px; }
+.roster-court-dot { height: 6px; width: 6px; border-radius: 50%; }
+.roster-td { min-width: 155px; padding: 9px; text-align: center; vertical-align: middle; border-bottom: 1px solid #f1f5f9; }
+.roster-round-number { position: sticky; left: 0; z-index: 1; background: #fff; padding: 12px; border-right: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.roster-round-number > span { display: inline-flex; justify-content: center; align-items: center; width: 34px; height: 34px; border-radius: 10px; background: #f1f5f9; color: #475569; }
+.roster-table tbody tr:last-child > * { border-bottom: 0; }
+.roster-matchup { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 90px; height: 100%; border: 1px solid #0f172a05; border-radius: 10px; padding: 10px 8px; }
+.roster-player-name { justify-content: center; font-size: 12px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
+.roster-versus { display: flex; align-items: center; gap: 7px; font-size: 9px; font-weight: 500; color: #64748b; line-height: 1; }
+.roster-versus > span { height: 1px; width: 18px; background: #94a3b840; }
+.roster-rest-heading { color: #64748b; }
+.roster-rest { min-width: 110px; background: #fcfcfd; font-size: 11px; color: #64748b; }
+.roster-rest-players { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+.roster-rest-players > span { background: #f1f5f9; border: 1px solid #e2e8f0; padding: 3px 7px; border-radius: 6px; }
+.roster-rest-empty { color: #94a3b8; }
+.roster-footer { margin-top: 22px; }
+.roster-footer-players { display: flex; gap: 12px; }
+.roster-player-panel { flex: 1; min-width: 0; border: 1px solid #f1f5f9; border-radius: 12px; padding: 16px; overflow-wrap: anywhere; }
+.roster-date { display: flex; justify-content: space-between; margin-top: 18px; font-size: 10px; color: #64748b; }
+.roster-date > span { font-weight: 750; color: #7c3aed; letter-spacing: -0.3px; }
+
+@media (max-width: 640px) {
+  .roster-table-container { padding: 16px; border-radius: 18px; }
+  .roster-header { flex-direction: column; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+  .roster-session-title { font-size: 24px; }
+  .roster-badges { justify-content: flex-start; max-width: none; }
+  .roster-th { padding: 12px 8px; }
+  .roster-td { min-width: 140px; padding: 6px; }
+  .roster-round-number { padding: 8px; }
+  .roster-footer-players { flex-direction: column; }
+  .roster-player-panel { padding: 12px; }
+}

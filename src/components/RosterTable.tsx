@@ -1,5 +1,4 @@
 import { forwardRef } from 'react';
-import './RosterTable.css';
 import type { RosterData, Player } from '../types';
 
 interface RosterTableProps {

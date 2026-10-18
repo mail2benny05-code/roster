@@ -1,5 +1,5 @@
 export type Gender = 'male' | 'female';
-export type RosterType = 'gender' | 'mixed';
+export type RosterType = 'gender' | 'mixed' | 'fixed';
 export type PartnerMode = 'strict' | 'hybrid' | 'flexible';
 export type Page = 'login' | 'setup' | 'roster' | 'history';
 

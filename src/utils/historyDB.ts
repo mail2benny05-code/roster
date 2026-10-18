@@ -26,7 +26,11 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-/** Persist a new history entry, trimming the oldest if over MAX_ENTRIES. */
+function playerSetKey(setup: SetupState): string {
+  return setup.players.map(player => player.id).sort().join('|');
+}
+
+/** Update the saved roster for this player set, or add a new entry when changed. */
 export async function saveToHistory(setup: SetupState): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -36,16 +40,29 @@ export async function saveToHistory(setup: SetupState): Promise<void> {
 
     getAllReq.onsuccess = () => {
       const entries: HistoryEntry[] = getAllReq.result;
-      // Sort oldest first so we can delete from the front
-      entries.sort((a, b) => a.createdAt - b.createdAt);
+      const signature = playerSetKey(setup);
+      const matches = entries
+        .filter(entry => playerSetKey(entry.setup) === signature)
+        .sort((a, b) => b.createdAt - a.createdAt);
+      const existing = matches[0];
+      const duplicateIds = new Set(matches.map(entry => entry.id));
+      const otherEntries = entries.filter(entry => !duplicateIds.has(entry.id));
 
-      // Trim oldest entries to stay within MAX_ENTRIES (leave room for the new one)
-      while (entries.length >= MAX_ENTRIES) {
-        store.delete(entries.shift()!.id);
+      // Collapse old duplicates for this group and update the newest entry in
+      // place so re-generating the same roster does not fill the history list.
+      for (const duplicate of matches.slice(1)) store.delete(duplicate.id);
+
+      if (!existing) {
+        // Sort oldest first so we can delete from the front, leaving room for
+        // the new player set.
+        otherEntries.sort((a, b) => a.createdAt - b.createdAt);
+        while (otherEntries.length >= MAX_ENTRIES) {
+          store.delete(otherEntries.shift()!.id);
+        }
       }
 
       const entry: HistoryEntry = {
-        id: crypto.randomUUID(),
+        id: existing?.id ?? crypto.randomUUID(),
         createdAt: Date.now(),
         setup,
       };
@@ -61,15 +78,27 @@ export async function saveToHistory(setup: SetupState): Promise<void> {
 export async function getHistory(): Promise<HistoryEntry[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
+    const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     const req = store.index('createdAt').getAll();
+    let uniqueEntries: HistoryEntry[] = [];
     req.onsuccess = () => {
       const entries: HistoryEntry[] = req.result;
       entries.sort((a, b) => b.createdAt - a.createdAt);
-      resolve(entries);
+      const seenPlayers = new Set<string>();
+      uniqueEntries = entries.filter(entry => {
+        const signature = playerSetKey(entry.setup);
+        if (seenPlayers.has(signature)) {
+          store.delete(entry.id);
+          return false;
+        }
+        seenPlayers.add(signature);
+        return true;
+      });
     };
     req.onerror = () => reject(req.error);
+    tx.oncomplete = () => resolve(uniqueEntries);
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -83,4 +112,3 @@ export async function deleteFromHistory(id: string): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
-

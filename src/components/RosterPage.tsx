@@ -10,6 +10,7 @@ interface RosterPageProps {
   onNewSchedule: () => void;
   onLogout: () => void;
   onHistory: () => void;
+  onStartGame: () => void;
 }
 
 export default function RosterPage({
@@ -19,6 +20,7 @@ export default function RosterPage({
   onNewSchedule,
   onLogout,
   onHistory,
+  onStartGame,
 }: RosterPageProps) {
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -123,6 +125,12 @@ export default function RosterPage({
             className="text-slate-300 hover:text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 hover:border-slate-500 transition-colors"
           >
             New Schedule
+          </button>
+          <button
+            onClick={onStartGame}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            Start Game
           </button>
           <button
             onClick={handleExport}

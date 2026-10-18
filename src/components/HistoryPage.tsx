@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { SetupState } from '../types';
 import { getHistory, deleteFromHistory } from '../utils/historyDB';
 import type { HistoryEntry } from '../utils/historyDB';
 
 interface HistoryPageProps {
   onBack: () => void;
-  onLoad: (setup: SetupState) => void;
+  onLoad: (entry: HistoryEntry) => void;
 }
 
 function formatDate(ts: number): string {
@@ -84,7 +83,7 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-bold text-white mb-1">Roster History</h1>
         <p className="text-slate-400 text-sm mb-6">
-          Last {entries.length === 0 && !loading ? '0' : '10'} rosters — click any entry to re-load it into the editor.
+          Saved events include their schedules and scores, so you can resume after closing the browser.
         </p>
 
         {loading && (
@@ -124,7 +123,7 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
                 {/* Main info — clickable */}
                 <button
                   className="flex-1 text-left min-w-0"
-                  onClick={() => onLoad(entry.setup)}
+                  onClick={() => onLoad(entry)}
                 >
                   <div className="text-white font-semibold text-sm truncate">
                     {entry.setup.sessionName || <span className="text-slate-500 italic">Unnamed session</span>}
@@ -144,9 +143,9 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
 
                     {/* Courts & Rounds */}
                     <span className="text-slate-400 text-xs">
-                      {entry.setup.numCourts} court{entry.setup.numCourts !== 1 ? 's' : ''}
+                      {entry.event?.rosterData.numCourts ?? entry.setup.numCourts} court{(entry.event?.rosterData.numCourts ?? entry.setup.numCourts) !== 1 ? 's' : ''}
                       {' · '}
-                      {entry.setup.numRounds} round{entry.setup.numRounds !== 1 ? 's' : ''}
+                      {entry.event?.rosterData.rounds.length ?? entry.setup.numRounds} round{(entry.event?.rosterData.rounds.length ?? entry.setup.numRounds) !== 1 ? 's' : ''}
                     </span>
                   </div>
                   <div className="mt-1.5">
@@ -157,13 +156,22 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
                     }`}>
                       {rosterTypeLabel(entry)}
                     </span>
+                    <span className={`ml-2 text-xs px-2 py-0.5 rounded-full border ${
+                      entry.event?.status === 'finished'
+                        ? 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50'
+                        : entry.event?.status === 'in-progress'
+                          ? 'bg-amber-900/40 text-amber-300 border-amber-700/50'
+                          : 'bg-slate-700/50 text-slate-300 border-slate-600/50'
+                    }`}>
+                      {entry.event?.status === 'finished' ? 'Finished' : entry.event?.status === 'in-progress' ? 'In progress' : entry.event ? 'Ready to play' : 'Setup only'}
+                    </span>
                   </div>
                 </button>
 
                 {/* Load arrow (visible on hover) */}
                 <button
-                  onClick={() => onLoad(entry.setup)}
-                  title="Load this roster"
+                  onClick={() => onLoad(entry)}
+                  title={entry.event ? 'Resume this event' : 'Load this setup'}
                   className="shrink-0 text-slate-600 group-hover:text-violet-400 transition-colors"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

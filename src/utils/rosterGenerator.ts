@@ -1165,7 +1165,10 @@ export function generateRoster(
   allowSameGender = false,
   partnerMode: PartnerMode = 'strict',
   avoidRoster?: RosterData,
+  continueFrom?: RosterData,
 ): RosterData {
+  const previousRounds = continueFrom?.rounds ?? [];
+  const firstNewRoundNumber = previousRounds.length + 1;
   if (rosterType === 'fixed') {
     // Pair players in entry order once. Those teams remain intact for every round
     // and each team sits or plays as a unit.
@@ -1186,8 +1189,13 @@ export function generateRoster(
     for (let attempt = 0; attempt < attempts; attempt++) {
       const history = makeHistory(players, false, eligibleSitPartners, eligibleSitting);
       const rounds: Round[] = [];
-      let previousSit = new Set<string>();
+      for (const previousRound of previousRounds) updateHistory(previousRound.courts, previousRound.sittingOut, history);
+      const lastPreviousRound = previousRounds.at(-1);
+      let previousSit = new Set(lastPreviousRound?.sittingOut.map(player => player.id) ?? []);
       let previousOpp = new Set<string>();
+      if (lastPreviousRound) {
+        for (const court of lastPreviousRound.courts) for (const a of court.team1) for (const b of court.team2) previousOpp.add(oppKey(a.id, b.id));
+      }
       for (let r = 0; r < numRounds; r++) {
         const ranked = shuffle(teams).sort((a, b) => {
           const sitA = get(history.sitOutCount, a[0].id) + get(history.sitOutCount, a[1].id);
@@ -1202,13 +1210,13 @@ export function generateRoster(
         const sittingOut = players.filter(p => sittingIds.has(p.id));
         const playingTeams = teams.filter(team => !sittingIds.has(team[0].id));
         const courts = assignCourts(playingTeams, numCourts, history, previousOpp, players).courts;
-        rounds.push({ roundNumber: r + 1, courts, sittingOut });
+        rounds.push({ roundNumber: firstNewRoundNumber + r, courts, sittingOut });
         updateHistory(courts, sittingOut, history);
         previousSit = sittingIds;
         previousOpp = new Set();
         for (const court of courts) for (const a of court.team1) for (const b of court.team2) previousOpp.add(oppKey(a.id, b.id));
       }
-      const quality = scoreSchedule(rounds, players, eligiblePartners, eligibleSitPartners, eligibleSitting);
+      const quality = scoreSchedule([...previousRounds, ...rounds], players, eligiblePartners, eligibleSitPartners, eligibleSitting);
       if (avoidSignature && rotationSignature(rounds) !== avoidSignature && (bestDifferentQuality === null || compareScheduleQuality(quality, bestDifferentQuality) < 0)) {
         bestDifferent = rounds;
         bestDifferentQuality = quality;
@@ -1267,7 +1275,7 @@ export function generateRoster(
   const avoidSignature = avoidRoster ? rotationSignature(avoidRoster.rounds) : null;
 
   let fivePlayerOpeners =
-    players.length === 5 &&
+    !continueFrom && players.length === 5 &&
     numCourts === 1 &&
     !restrictCrossGender &&
     !useHybrid
@@ -1292,10 +1300,20 @@ export function generateRoster(
       eligibleSitOutPartnerCount,
       eligibleSitOutPlayerIds,
     );
+    for (const previousRound of previousRounds) updateHistory(previousRound.courts, previousRound.sittingOut, history);
     const rounds: Round[] = [];
-    let prevSittingOut: Player[] = [];
+    let prevSittingOut: Player[] = previousRounds.at(-1)?.sittingOut ?? [];
     let prevPairIds = new Set<string>();
     let prevOppIds = new Set<string>();
+    const lastPreviousRound = previousRounds.at(-1);
+    if (lastPreviousRound) {
+      for (const court of lastPreviousRound.courts) {
+        for (const team of [court.team1, court.team2]) {
+          for (let i = 0; i < team.length; i++) for (let j = i + 1; j < team.length; j++) prevPairIds.add(pairKey(team[i].id, team[j].id));
+        }
+        for (const a of court.team1) for (const b of court.team2) prevOppIds.add(oppKey(a.id, b.id));
+      }
+    }
 
     for (let r = 0; r < numRounds; r++) {
       const openingRound = fivePlayerOpeners?.[r];
@@ -1330,7 +1348,7 @@ export function generateRoster(
             prevOppIds,
             );
 
-      rounds.push({ roundNumber: r + 1, courts, sittingOut });
+      rounds.push({ roundNumber: firstNewRoundNumber + r, courts, sittingOut });
       updateHistory(courts, sittingOut, history);
 
       prevSittingOut = sittingOut;
@@ -1353,7 +1371,7 @@ export function generateRoster(
     }
 
     const quality = scoreSchedule(
-      rounds,
+      [...previousRounds, ...rounds],
       players,
       eligiblePartnerCount,
       eligibleSitOutPartnerCount,

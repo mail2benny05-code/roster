@@ -1,9 +1,17 @@
-import type { SetupState } from '../types';
+import type { GameScore, RosterData, SetupState } from '../types';
+
+export interface SavedGameEvent {
+  rosterData: RosterData;
+  scores: GameScore[];
+  status: 'scheduled' | 'in-progress' | 'finished';
+  currentRound: number;
+}
 
 export interface HistoryEntry {
   id: string;
   createdAt: number; // Unix ms timestamp
   setup: SetupState;
+  event?: SavedGameEvent;
 }
 
 const DB_NAME = 'rallyq-db';
@@ -31,7 +39,7 @@ function playerSetKey(setup: SetupState): string {
 }
 
 /** Update the saved roster for this player set, or add a new entry when changed. */
-export async function saveToHistory(setup: SetupState): Promise<void> {
+export async function saveToHistory(setup: SetupState, event?: SavedGameEvent): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -65,6 +73,7 @@ export async function saveToHistory(setup: SetupState): Promise<void> {
         id: existing?.id ?? crypto.randomUUID(),
         createdAt: Date.now(),
         setup,
+        ...(event ? { event } : {}),
       };
       store.put(entry);
     };

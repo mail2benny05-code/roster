@@ -521,4 +521,38 @@ describe('generateRoster – fixed partners', () => {
       }
     }
   });
+
+  it('appends new fixed-partner rounds after the existing roster', async () => {
+    const { generateRoster } = await import('./rosterGenerator');
+    const players = makePlayers(6);
+    const initial = generateRoster(players, 1, 2, 'fixed', 'Fixed teams');
+    const extension = generateRoster(players, 1, 2, 'fixed', 'Fixed teams', false, 'strict', undefined, initial);
+    expect(extension.rounds.map(round => round.roundNumber)).toEqual([3, 4]);
+    for (const round of extension.rounds) {
+      for (let i = 0; i < players.length; i += 2) {
+        const pair = players.slice(i, i + 2);
+        const sits = pair.map(player => round.sittingOut.some(sitting => sitting.id === player.id));
+        expect(sits[0]).toBe(sits[1]);
+        if (!sits[0]) {
+          const court = round.courts.find(game => [...game.team1, ...game.team2].some(player => player.id === pair[0].id));
+          const team = court && [court.team1, court.team2].find(side => side.some(player => player.id === pair[0].id));
+          expect(team?.some(player => player.id === pair[1].id)).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('generateRoster – round extensions', () => {
+  it('continues sit-out fairness from the existing rounds', async () => {
+    const { generateRoster } = await import('./rosterGenerator');
+    const players = makePlayers(5);
+    const initial = generateRoster(players, 1, 1, 'gender', 'Continue');
+    const extension = generateRoster(players, 1, 4, 'gender', 'Continue', false, 'strict', undefined, initial);
+    const combined = [...initial.rounds, ...extension.rounds];
+    expect(extension.rounds.map(round => round.roundNumber)).toEqual([2, 3, 4, 5]);
+    const sitCounts = new Map(players.map(player => [player.id, 0]));
+    for (const round of combined) for (const player of round.sittingOut) sitCounts.set(player.id, (sitCounts.get(player.id) ?? 0) + 1);
+    expect([...sitCounts.values()]).toEqual([1, 1, 1, 1, 1]);
+  });
 });

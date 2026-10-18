@@ -1,7 +1,7 @@
 export type Gender = 'male' | 'female';
 export type RosterType = 'gender' | 'mixed' | 'fixed';
 export type PartnerMode = 'strict' | 'hybrid' | 'flexible';
-export type Page = 'login' | 'setup' | 'roster' | 'history';
+export type Page = 'login' | 'setup' | 'roster' | 'game' | 'results' | 'history';
 
 export interface Player {
   id: string;
@@ -40,4 +40,15 @@ export interface SetupState {
   sessionName: string;
   allowSameGender?: boolean;
   trackGender?: boolean;
+}
+
+export interface GameScore {
+  roundNumber: number;
+  courtNumber: number;
+  team1Score: number;
+  team2Score: number;
+  /** Per-game scores for best-of-three matches. When present, these determine
+   * clean sweeps and comeback wins; the top-level scores remain match totals. */
+  games?: Array<{ team1Score: number; team2Score: number }>;
+  doNotPlay?: boolean;
 }

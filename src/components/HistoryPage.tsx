@@ -19,6 +19,7 @@ function formatDate(ts: number): string {
 }
 
 function rosterTypeLabel(entry: HistoryEntry): string {
+  if (entry.setup.rosterType === 'fixed') return 'Fixed Partner';
   if (entry.setup.rosterType === 'mixed') {
     return entry.setup.allowSameGender ? 'Mixed (flexible)' : 'Mixed';
   }
@@ -113,7 +114,7 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
             {entries.map((entry, idx) => (
               <div
                 key={entry.id}
-                className="bg-slate-800/60 backdrop-blur border border-slate-700/50 rounded-2xl p-4 flex items-center gap-4 hover:border-violet-500/50 hover:bg-slate-800/80 transition-all group"
+                className="history-entry bg-slate-800/60 backdrop-blur border border-slate-700/50 rounded-2xl p-4 flex items-center gap-4 hover:border-violet-500/50 hover:bg-slate-800/80 transition-all group"
               >
                 {/* Index badge */}
                 <div className="w-8 h-8 rounded-lg bg-violet-600/20 border border-violet-500/20 flex items-center justify-center shrink-0">
@@ -203,4 +204,3 @@ export default function HistoryPage({ onBack, onLoad }: HistoryPageProps) {
     </div>
   );
 }
-

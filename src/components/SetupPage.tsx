@@ -17,6 +17,11 @@ function minFairRoundsForSetup(
   rosterType: RosterType,
   allowSameGender: boolean,
 ): number {
+  if (rosterType === 'fixed') {
+    const teams = Math.floor(players.length / 2);
+    const teamsPlaying = numCourts * 2;
+    return teams <= teamsPlaying ? 1 : teams / gcd(teams, teamsPlaying);
+  }
   if (rosterType === 'mixed' && !allowSameGender) {
     const males = players.filter(p => p.gender === 'male').length;
     const females = players.filter(p => p.gender === 'female').length;
@@ -60,24 +65,14 @@ function Counter({ label, value, min, max, onChange }: CounterProps) {
       <div className="flex items-center gap-2">
         <button
           onClick={() => onChange(Math.max(min, value - 1))}
-          className="w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg flex items-center justify-center transition-colors"
+          className="w-11 h-11 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg flex items-center justify-center transition-colors touch-manipulation"
         >
           −
         </button>
-        <input
-          type="number"
-          value={value}
-          min={min}
-          max={max}
-          onChange={e => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v)) onChange(Math.min(max, Math.max(min, v)));
-          }}
-          className="w-16 text-center bg-slate-700 border border-slate-600 rounded-lg text-white py-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-        />
+        <output aria-live="polite" className="w-12 text-center text-white font-semibold tabular-nums">{value}</output>
         <button
           onClick={() => onChange(Math.min(max, value + 1))}
-          className="w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg flex items-center justify-center transition-colors"
+          className="w-11 h-11 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg flex items-center justify-center transition-colors touch-manipulation"
         >
           +
         </button>
@@ -93,7 +88,7 @@ function GenderChip({ gender, onChange }: { gender: Gender; onChange: (g: Gender
     <button
       type="button"
       onClick={() => onChange(isMale ? 'female' : 'male')}
-      className={`text-xs rounded-full px-3 py-1 border font-semibold transition-colors select-none ${
+      className={`min-h-10 touch-manipulation text-xs rounded-full px-3 py-1 border font-semibold transition-colors select-none ${
         isMale
           ? 'bg-blue-900/40 text-blue-300 border-blue-700/50 hover:bg-blue-800/50'
           : 'bg-pink-900/40 text-pink-300 border-pink-700/50 hover:bg-pink-800/50'
@@ -113,9 +108,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
   const [trackGender, setTrackGender] = useState<boolean>(initialState.trackGender ?? false);
 
   const [newName, setNewName] = useState('');
+  const [newPartnerName, setNewPartnerName] = useState('');
   const [newGender, setNewGender] = useState<Gender>('male');
   const [nameError, setNameError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Imbalance modal (mixed mode)
   const [showImbalanceModal, setShowImbalanceModal] = useState(false);
@@ -126,17 +123,15 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
 
   // Fairness modal
   const [showFairnessModal, setShowFairnessModal] = useState(false);
-  const [pendingAllowSameGender, setPendingAllowSameGender] = useState(false);
+  const [pendingAllowSameGender, setPendingAllowSameGender] = useState(initialState.allowSameGender ?? false);
   const [pendingPartnerMode, setPendingPartnerMode] = useState<PartnerMode>('strict');
   const [fairnessHint, setFairnessHint] = useState<FairnessHint>({ minFair: 1, suggestedNext: 0, suggestedPrev: null });
-
-  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const isEditing = initialState.players.length > 0;
 
   // Derived gender counts (only meaningful when gender is tracked)
-  const showGender = rosterType === 'mixed' || trackGender;
-  const maleCount = players.filter(p => p.gender === 'male').length;
+  const showGender = rosterType !== 'fixed' && (rosterType === 'mixed' || trackGender);
+  const maleCount = players.filter(p => (p.gender ?? 'male') === 'male').length;
   const femaleCount = players.filter(p => p.gender === 'female').length;
 
   // When switching TO mixed mode, ensure every existing player has a gender.
@@ -172,8 +167,34 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     nameInputRef.current?.focus();
   }
 
+  function addFixedPair() {
+    const names = [newName.trim(), newPartnerName.trim()];
+    if (names.some(name => !name)) {
+      setNameError('Enter both partner names to add a pair.');
+      return;
+    }
+    const existingNames = new Set(players.map(player => player.name.trim().toLowerCase()));
+    const duplicate = names.find((name, index) =>
+      existingNames.has(name.toLowerCase()) || names.slice(0, index).some(previous => previous.toLowerCase() === name.toLowerCase()),
+    );
+    if (duplicate) {
+      setNameError(`“${duplicate}” is already in the player list.`);
+      return;
+    }
+    setPlayers(prev => [...prev, ...names.map(name => ({ id: crypto.randomUUID(), name }))]);
+    setNewName('');
+    setNewPartnerName('');
+    setNameError(null);
+    nameInputRef.current?.focus();
+  }
+
   function removePlayer(id: string) {
     setPlayers(prev => prev.filter(p => p.id !== id));
+  }
+
+  function removeFixedPair(pair: Player[]) {
+    const ids = new Set(pair.map(player => player.id));
+    setPlayers(prev => prev.filter(player => !ids.has(player.id)));
   }
 
   function updatePlayerName(id: string, name: string) {
@@ -184,23 +205,27 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     setPlayers(prev => prev.map(p => (p.id === id ? { ...p, gender } : p)));
   }
 
+  function validateForGeneration(playersToCheck: Player[], allowSameGender: boolean): boolean {
+    const { valid, errors } = validateSetup(playersToCheck, numCourts, rosterType, allowSameGender);
+    setValidationErrors(valid ? [] : errors);
+    return valid;
+  }
+
   // ── Generate flow ──────────────────────────────────────────────────────────
 
   function handleGenerate() {
-    // Defensively ensure all players have a gender when in mixed mode before
-    // any validation or generation runs. This guards against any edge-case
-    // where the useEffect patch hasn't flushed yet.
+    // Keep missing genders consistent with the male default shown by each
+    // player's chip whenever gender is visible, including gender-based mode.
     const safePlayers: Player[] =
-      rosterType === 'mixed'
+      (rosterType !== 'fixed' && (rosterType === 'mixed' || trackGender))
         ? players.map(p => ({ ...p, gender: p.gender ?? 'male' }))
         : players;
 
-    const { valid, errors } = validateSetup(safePlayers, numCourts, rosterType);
-    if (!valid) {
-      setValidationErrors(errors);
-      return;
-    }
-    setValidationErrors([]);
+    // Mixed mode must reach the imbalance question when a flexible schedule
+    // can fit, even if strict 1M+1F courts cannot. The selected mode is checked
+    // again before generation.
+    const canValidateEitherMixedMode = rosterType === 'mixed';
+    if (!validateForGeneration(safePlayers, canValidateEitherMixedMode)) return;
 
     // Commit the patched players so the rest of the flow (and any modals) see
     // the correct data.
@@ -212,7 +237,9 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
 
     if (rosterType === 'mixed' && mCount !== fCount) {
       const minorityCount = Math.min(mCount, fCount);
-      setModalAllowSameGender(minorityCount === numCourts * 2);
+      setModalAllowSameGender(
+        minorityCount <= numCourts * 2 || (initialState.allowSameGender ?? false),
+      );
       setShowImbalanceModal(true);
       return;
     }
@@ -244,6 +271,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     partnerMode: PartnerMode,
     playersToUse: Player[] = players,
   ) {
+    if (!validateForGeneration(playersToUse, allowSameGender)) return;
     setPendingAllowSameGender(allowSameGender);
     setPendingPartnerMode(partnerMode);
     const minFair = minFairRoundsForSetup(playersToUse, numCourts, rosterType, allowSameGender);
@@ -263,6 +291,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     partnerMode: PartnerMode,
     playersToUse: Player[] = players,
   ) {
+    if (!validateForGeneration(playersToUse, allowSameGender)) return;
     onGenerate({
       rosterType,
       partnerMode,
@@ -288,7 +317,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
     onReset();
   }
 
-  const minPlayers = rosterType === 'mixed' ? numCourts * 2 + 1 : numCourts * 4 + 1;
+  const minPlayers = numCourts * 4;
 
   const minorityGenderCount = Math.min(maleCount, femaleCount);
   const neverSitsOutGender: 'male' | 'female' | null =
@@ -299,7 +328,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-950 via-slate-900 to-slate-950 p-4">
       {/* Header */}
-      <div className="max-w-2xl mx-auto mb-6 flex items-center justify-between">
+        <div className="max-w-2xl mx-auto mb-6 flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-violet-600/30 rounded-lg flex items-center justify-center">
             <svg className="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -361,10 +390,11 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
         {/* Section 2: Roster type */}
         <div className="bg-slate-800/60 backdrop-blur border border-slate-700/50 rounded-2xl p-5">
           <div className="text-slate-300 text-sm font-medium mb-3">Roster type</div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {([
               { value: 'gender', label: 'Gender-based', icon: '⚡', desc: 'Any 2 players can pair up' },
               { value: 'mixed', label: 'Mixed', icon: '🤝', desc: 'Each pair = 1 male + 1 female' },
+              { value: 'fixed', label: 'Fixed Partner', icon: '🔒', desc: 'Partners stay together every round' },
             ] as const).map(opt => (
               <button
                 key={opt.value}
@@ -418,29 +448,57 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
             Players ({players.length} added)
           </div>
 
-          {/* Add player row */}
-          <div className="flex flex-col gap-2 mb-3 sm:flex-row">
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={newName}
-              onChange={e => { setNewName(e.target.value); setNameError(null); }}
-              onKeyDown={e => e.key === 'Enter' && addPlayer()}
-              placeholder="Player name"
-              className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
-            />
-            <div className="flex gap-2 items-center">
-              {showGender && (
-                <GenderChip gender={newGender} onChange={setNewGender} />
-              )}
-              <button
-                onClick={addPlayer}
-                className="flex-none bg-violet-600 hover:bg-violet-500 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
-              >
-                Add
-              </button>
+          {/* Fixed mode adds two names at once so the partner pairing is explicit. */}
+          {rosterType === 'fixed' ? (
+            <div className="mb-3 rounded-xl border border-slate-700 bg-slate-900/30 p-3">
+              <p className="text-slate-400 text-xs mb-2">Add a partner pair</p>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr_auto] gap-2 items-center">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={e => { setNewName(e.target.value); setNameError(null); }}
+                  onKeyDown={e => e.key === 'Enter' && addFixedPair()}
+                  placeholder="First partner"
+                  aria-label="First partner name"
+                  className="min-w-0 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
+                />
+                <span className="hidden sm:block text-slate-500 text-sm text-center">+</span>
+                <input
+                  type="text"
+                  value={newPartnerName}
+                  onChange={e => { setNewPartnerName(e.target.value); setNameError(null); }}
+                  onKeyDown={e => e.key === 'Enter' && addFixedPair()}
+                  placeholder="Second partner"
+                  aria-label="Second partner name"
+                  className="min-w-0 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
+                />
+                <button
+                  onClick={addFixedPair}
+                  className="bg-violet-600 hover:bg-violet-500 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
+                >
+                  Add pair
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col gap-2 mb-3 sm:flex-row">
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={newName}
+                onChange={e => { setNewName(e.target.value); setNameError(null); }}
+                onKeyDown={e => e.key === 'Enter' && addPlayer()}
+                placeholder="Player name"
+                className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 text-sm"
+              />
+              <div className="flex gap-2 items-center">
+                {showGender && <GenderChip gender={newGender} onChange={setNewGender} />}
+                <button onClick={addPlayer} className="flex-none bg-violet-600 hover:bg-violet-500 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
 
           {nameError && (
             <p className="text-red-400 text-xs mb-2">{nameError}</p>
@@ -459,8 +517,39 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
           )}
 
           {/* Player list */}
-          {players.length > 0 && (
-            <div className="space-y-1 mb-3 max-h-64 overflow-y-auto">
+          {players.length > 0 && rosterType === 'fixed' && (
+            <div className="space-y-2 mb-3 max-h-64 overflow-y-auto max-sm:max-h-none max-sm:overflow-visible">
+              {Array.from({ length: Math.ceil(players.length / 2) }, (_, pairIndex) => {
+                const pair = players.slice(pairIndex * 2, pairIndex * 2 + 2);
+                return (
+                  <div key={pair[0].id} className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-700/30 p-3">
+                    <span className="text-violet-300 text-xs font-semibold w-16 shrink-0">Pair {pairIndex + 1}</span>
+                    {pair.map((player, memberIndex) => (
+                      <div key={player.id} className="flex min-w-0 flex-1 items-center gap-2">
+                        {memberIndex > 0 && <span className="hidden sm:block text-slate-500">+</span>}
+              <input
+                ref={nameInputRef}
+                type="text"
+                          value={player.name}
+                          aria-label={`Pair ${pairIndex + 1}, partner ${memberIndex + 1}`}
+                          onChange={e => updatePlayerName(player.id, e.target.value)}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-600/70 bg-slate-800/60 px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500"
+                        />
+                      </div>
+                    ))}
+                    {pair.length === 2 ? (
+                      <button onClick={() => removeFixedPair(pair)} aria-label={`Remove pair ${pairIndex + 1}`} className="self-end sm:self-auto px-2 text-slate-500 hover:text-red-400 text-xl leading-none">×</button>
+                    ) : (
+                      <span className="text-amber-300 text-xs">Add one more player to complete this pair</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {players.length > 0 && rosterType !== 'fixed' && (
+            <div className="space-y-1 mb-3 max-h-64 overflow-y-auto max-sm:max-h-none max-sm:overflow-visible">
               {players.map((player, idx) => (
                 <div
                   key={player.id}
@@ -516,7 +605,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
       {/* ── Imbalance confirmation modal (mixed mode) ─────────────────────── */}
       {showImbalanceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -595,7 +684,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
       {/* ── Combo vs Random modal (gender-based + both genders tracked) ───── */}
       {showComboModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-violet-500/20 rounded-xl flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -701,7 +790,7 @@ export default function SetupPage({ initialState, onGenerate, onLogout, onReset,
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain shadow-2xl">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 bg-sky-500/20 rounded-xl flex items-center justify-center shrink-0">
                   <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

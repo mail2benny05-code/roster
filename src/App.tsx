@@ -10,6 +10,8 @@ import RosterPage from './components/RosterPage';
 import HistoryPage from './components/HistoryPage';
 import ScorekeeperPage from './components/ScorekeeperPage';
 import ResultsPage from './components/ResultsPage';
+import { decodeResultsSummary } from './utils/sharedResults';
+import type { ResultsSummary } from './utils/sharedResults';
 
 const DEFAULT_SETUP: SetupState = {
   rosterType: 'gender',
@@ -54,7 +56,43 @@ function readSavedEvent(): SavedEvent | null {
   }
 }
 
+function SharedResultsRoute({ payload }: { payload: string }) {
+  const [summary, setSummary] = useState<ResultsSummary | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let current = true;
+    decodeResultsSummary(payload).then(result => {
+      if (current) setSummary(result);
+    }).catch(() => {
+      if (current) setError('This results link is invalid or could not be opened.');
+    });
+    return () => { current = false; };
+  }, [payload]);
+
+  if (summary) return <ResultsPage summary={summary} />;
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 p-4 text-white">
+      <div className="rounded-2xl border border-slate-700 bg-slate-900 p-6 text-center">
+        <h1 className="text-xl font-bold">Shared results</h1>
+        <p className="mt-2 text-slate-300">{error || 'Loading results…'}</p>
+        <a href={import.meta.env.BASE_URL} className="mt-4 inline-block rounded-xl bg-violet-600 px-4 py-2 font-semibold hover:bg-violet-500">Open RallyQ</a>
+      </div>
+    </main>
+  );
+}
+
 export default function App() {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const updateHash = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', updateHash);
+    return () => window.removeEventListener('hashchange', updateHash);
+  }, []);
+  return hash.startsWith('#results=') ? <SharedResultsRoute key={hash} payload={hash.slice('#results='.length)} /> : <LocalApp />;
+}
+
+function LocalApp() {
   // Auth disabled: land directly on setup. Set AUTH_ENABLED to true to re-enable the login page.
   const AUTH_ENABLED = false;
   const [savedEvent] = useState(readSavedEvent);

@@ -1,27 +1,102 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { toPng } from 'html-to-image';
 import type { GameScore, RosterData } from '../types';
-import { calculateResults } from '../utils/scoreResults';
+import { createResultsSummary, encodeResultsSummary, shortenResultsLink } from '../utils/sharedResults';
+import type { ResultsSummary } from '../utils/sharedResults';
 import AddRoundsControl from './AddRoundsControl';
 
-interface Props {
+type Props = {
   data: RosterData;
   scores: GameScore[];
   onBack: () => void;
   onSchedule: () => void;
   onAddRounds: (count: number) => void;
-}
+  summary?: never;
+} | {
+  summary: ResultsSummary;
+  data?: never;
+  scores?: never;
+  onBack?: never;
+  onSchedule?: never;
+  onAddRounds?: never;
+};
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
-export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRounds }: Props) {
+export default function ResultsPage(props: Props) {
   const summaryRef = useRef<HTMLDivElement>(null);
-  const results = calculateResults(data, scores);
+  const [shareMessage, setShareMessage] = useState('');
+  const [shareUrl, setShareUrl] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
+  const shared = props.summary !== undefined;
+  const summary = shared ? props.summary : createResultsSummary(props.data, props.scores);
+  const { sessionName, rosterType, playedCount, doNotPlayCount, results } = summary;
   const activeStandings = results.standings.filter(standing => standing.played > 0);
   const podium = activeStandings.slice(0, 3);
   const dominant = [...activeStandings].sort((a, b) => b.pointDifference - a.pointDifference || b.winPercentage - a.winPercentage || b.wins - a.wins)[0];
   const mostWins = [...activeStandings].sort((a, b) => b.wins - a.wins || b.winPercentage - a.winPercentage || b.pointDifference - a.pointDifference)[0];
-  const playedCount = results.standings.reduce((sum, standing) => sum + standing.played, 0) / (data.rosterType === 'fixed' ? 2 : 4);
+
+  async function shareResults() {
+    if (isSharing) return;
+    setIsSharing(true);
+    setShareMessage('');
+    setShareUrl('');
+    let link: string;
+    try {
+      const payload = await encodeResultsSummary(summary);
+      const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+      url.hash = `results=${payload}`;
+      link = url.toString();
+    } catch (error) {
+      setShareMessage(error instanceof Error ? error.message : 'Could not create a results link.');
+      setIsSharing(false);
+      return;
+    }
+    const localHost = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+    let shortened = false;
+    if (!localHost) {
+      try {
+        link = await shortenResultsLink(link);
+        shortened = true;
+      } catch {
+        // The full link still opens the results when the shortening service is unavailable.
+      }
+    }
+    setShareUrl(link);
+    const linkDescription = localHost
+      ? 'This link points to localhost and only works on this device.'
+      : shortened ? 'Short results link' : 'Shortener unavailable; full results link';
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: `${sessionName || 'Round robin'} results`, url: link });
+        setShareMessage(`${linkDescription} shared.`);
+        setIsSharing(false);
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          setShareMessage(`${linkDescription} ready to copy.`);
+          setIsSharing(false);
+          return;
+        }
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      setShareMessage(`${linkDescription} copied.`);
+    } catch {
+      setShareMessage(`${linkDescription} ready to copy below.`);
+    }
+    setIsSharing(false);
+  }
+
+  async function copyShareLink() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareMessage('Results link copied.');
+    } catch {
+      setShareMessage('Select and copy the link below.');
+    }
+  }
 
   async function downloadImage() {
     if (!summaryRef.current) return;
@@ -31,12 +106,12 @@ export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRou
       width: summaryRef.current.scrollWidth,
       height: summaryRef.current.scrollHeight,
     });
-    downloadUrl(dataUrl, `${data.sessionName || 'round-robin-results'}.png`);
+    downloadUrl(dataUrl, `${sessionName || 'round-robin-results'}.png`);
   }
 
   function downloadHtml() {
     const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
-    const title = escape(data.sessionName || 'Round robin results');
+    const title = escape(sessionName || 'Round robin results');
     const podiumRows = activeStandings.slice(0, 3).map((standing, index) => `<li><strong>${index + 1}. ${escape(standing.name)}</strong> — ${standing.wins} wins, ${standing.losses} losses, ${standing.winPercentage.toFixed(1)}% win rate</li>`).join('');
     const tableRows = results.standings.map((standing, index) => `<tr><td>${index + 1}</td><th scope="row">${escape(standing.name)}</th><td>${standing.wins}</td><td>${standing.losses}</td><td>${standing.pointsFor}</td><td>${standing.pointsAgainst}</td><td>${standing.winPercentage.toFixed(1)}%</td></tr>`).join('');
     const highlights = [
@@ -47,13 +122,13 @@ export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRou
       `<li><strong>Spoiler index:</strong> ${results.spoilers.length ? results.spoilers.map(item => `${escape(item.name)} (${item.count})`).join(', ') : 'No top-three upsets'}</li>`,
       `<li><strong>Clean sweep:</strong> ${results.cleanSweepLeader ? `${escape(results.cleanSweepLeader.name)} (${results.cleanSweepLeader.percentage.toFixed(1)}%, ${results.cleanSweepLeader.cleanSweeps}/${results.cleanSweepLeader.matches} recorded matches)` : 'No individual game scores recorded'}</li>`,
       `<li><strong>Most Comeback Wins:</strong> ${results.comebackLeader ? `${escape(results.comebackLeader.name)} (${results.comebackLeader.wins} comeback wins)` : 'No comeback wins recorded'}</li>`,
-      `<li><strong>Giant Slayer:</strong> ${results.giantSlayer ? `${escape(results.giantSlayer.name)} (${results.giantSlayer.wins} wins over the top-ranked ${data.rosterType === 'fixed' ? 'team' : 'player'})` : 'No losses by the top-ranked player/team'}</li>`,
+      `<li><strong>Giant Slayer:</strong> ${results.giantSlayer ? `${escape(results.giantSlayer.name)} (${results.giantSlayer.wins} wins over the top-ranked ${rosterType === 'fixed' ? 'team' : 'player'})` : 'No losses by the top-ranked player/team'}</li>`,
     ].join('');
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>
       *{box-sizing:border-box}body{margin:0;padding:32px;background:#f1f5f9;color:#0f172a;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}.page{max-width:1000px;margin:auto;background:white;border-radius:22px;padding:32px;box-shadow:0 16px 50px #0f172a18}h1{margin:0;font-size:32px}h2{margin:28px 0 10px;font-size:21px}.muted{color:#64748b}.podium{padding:18px 24px;border-radius:16px;background:linear-gradient(135deg,#fef3c7,#f5f3ff)}.podium li,.highlights li{margin:8px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:left}thead{background:#f8fafc}td:not(:nth-child(2)){text-align:center}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{padding:16px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.card strong{display:block;margin-bottom:5px;color:#6d28d9}@media(max-width:600px){body{padding:10px}.page{padding:18px;overflow-x:auto}h1{font-size:25px}table{min-width:620px}}
-      </style></head><body><main class="page"><p class="muted">RallyQ · Final results</p><h1>${title}</h1><p class="muted">${playedCount} games recorded · ${scores.filter(score => score.doNotPlay).length} marked do not play · ${data.rosterType === 'fixed' ? 'Team standings' : 'Player standings'}</p><h2>Top finishers</h2><ol class="podium">${podiumRows || '<li>No games were recorded.</li>'}</ol><h2>Standings</h2><table><thead><tr><th>Rank</th><th>${data.rosterType === 'fixed' ? 'Team' : 'Player'}</th><th>W</th><th>L</th><th>Points earned</th><th>Points given</th><th>Win %</th></tr></thead><tbody>${tableRows}</tbody></table><h2>Game highlights</h2><ul class="highlights">${highlights}</ul></main></body></html>`;
+      </style></head><body><main class="page"><p class="muted">RallyQ · Final results</p><h1>${title}</h1><p class="muted">${playedCount} games recorded · ${doNotPlayCount} marked do not play · ${rosterType === 'fixed' ? 'Team standings' : 'Player standings'}</p><h2>Top finishers</h2><ol class="podium">${podiumRows || '<li>No games were recorded.</li>'}</ol><h2>Standings</h2><table><thead><tr><th>Rank</th><th>${rosterType === 'fixed' ? 'Team' : 'Player'}</th><th>W</th><th>L</th><th>Points earned</th><th>Points given</th><th>Win %</th></tr></thead><tbody>${tableRows}</tbody></table><h2>Game highlights</h2><ul class="highlights">${highlights}</ul></main></body></html>`;
     const objectUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
-    downloadUrl(objectUrl, `${data.sessionName || 'round-robin-results'}.html`);
+    downloadUrl(objectUrl, `${sessionName || 'round-robin-results'}.html`);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
@@ -64,16 +139,20 @@ export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRou
           <div>
             <p className="text-xs font-semibold uppercase tracking-[.18em] text-amber-300">Event complete</p>
             <h1 className="mt-1 text-3xl font-extrabold">Final Results</h1>
-            <p className="mt-1 text-sm text-slate-400">{data.sessionName || 'Round robin'} · {playedCount} games recorded</p>
+            <p className="mt-1 text-sm text-slate-400">{sessionName || 'Round robin'} · {playedCount} games recorded{shared ? ' · Shared results' : ''}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <AddRoundsControl onAdd={onAddRounds} compact />
+            {!shared && <AddRoundsControl onAdd={props.onAddRounds} compact />}
+            {!shared && <button onClick={shareResults} disabled={isSharing} className="min-h-11 rounded-xl bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60">{isSharing ? 'Preparing link…' : 'Share results link'}</button>}
             <button onClick={downloadImage} className="min-h-11 rounded-xl border border-slate-600 px-4 text-sm text-slate-200 hover:bg-slate-800">Download image</button>
             <button onClick={downloadHtml} className="min-h-11 rounded-xl border border-slate-600 px-4 text-sm text-slate-200 hover:bg-slate-800">Download HTML</button>
-            <button onClick={onBack} className="min-h-11 rounded-xl border border-slate-600 px-4 text-sm text-slate-200 hover:bg-slate-800">Back to scoring</button>
-            <button onClick={onSchedule} className="min-h-11 rounded-xl border border-violet-500/50 bg-violet-500/10 px-4 text-sm font-semibold text-violet-200 hover:bg-violet-500/20">View schedule</button>
+            {!shared && <button onClick={props.onBack} className="min-h-11 rounded-xl border border-slate-600 px-4 text-sm text-slate-200 hover:bg-slate-800">Back to scoring</button>}
+            {!shared && <button onClick={props.onSchedule} className="min-h-11 rounded-xl border border-violet-500/50 bg-violet-500/10 px-4 text-sm font-semibold text-violet-200 hover:bg-violet-500/20">View schedule</button>}
           </div>
         </header>
+        {!shared && <p className="mb-4 text-sm text-slate-400">A shared link shows these results as they are now. CleanURI receives the results URL to shorten it. Create a new link if you change the scores.</p>}
+        {shareMessage && <p role="status" className="mb-4 rounded-xl border border-violet-500/40 bg-violet-500/10 p-3 text-sm text-violet-100">{shareMessage}</p>}
+        {shareUrl && <div className="mb-4 flex gap-2"><input aria-label="Results share link" readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} className="min-w-0 flex-1 rounded-xl border border-slate-600 bg-slate-900 p-3 text-sm text-white" /><button onClick={copyShareLink} className="min-h-11 rounded-xl border border-violet-500 px-4 text-sm font-semibold text-violet-100 hover:bg-violet-500/20">Copy link</button></div>}
 
         <div ref={summaryRef} className="rounded-3xl bg-slate-900 p-3 sm:p-5">
         {podium.length > 0 ? (
@@ -107,13 +186,13 @@ export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRou
         <section className="mb-8">
             <div className="mb-4">
               <h2 className="text-xl font-bold">Standings</h2>
-              <p className="mt-1 text-sm text-slate-400">{data.rosterType === 'fixed' ? 'Results are tracked by fixed partner team.' : 'Results are tracked for each player.'}</p>
+              <p className="mt-1 text-sm text-slate-400">{rosterType === 'fixed' ? 'Results are tracked by fixed partner team.' : 'Results are tracked for each player.'}</p>
             </div>
             <div className="overflow-x-auto rounded-2xl border border-slate-700 bg-slate-800/60">
               <table className="w-full min-w-[640px] border-collapse text-left text-sm">
                 <thead className="bg-slate-700/60 text-xs uppercase tracking-wide text-slate-300">
                   <tr>
-                    <th className="px-4 py-3">Rank</th><th className="px-4 py-3">{data.rosterType === 'fixed' ? 'Team' : 'Player'}</th><th className="px-3 py-3 text-center">W</th><th className="px-3 py-3 text-center">L</th><th className="px-3 py-3 text-center">Points earned</th><th className="px-3 py-3 text-center">Points given</th><th className="px-3 py-3 text-center">Win %</th>
+                    <th className="px-4 py-3">Rank</th><th className="px-4 py-3">{rosterType === 'fixed' ? 'Team' : 'Player'}</th><th className="px-3 py-3 text-center">W</th><th className="px-3 py-3 text-center">L</th><th className="px-3 py-3 text-center">Points earned</th><th className="px-3 py-3 text-center">Points given</th><th className="px-3 py-3 text-center">Win %</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -149,7 +228,7 @@ export default function ResultsPage({ data, scores, onBack, onSchedule, onAddRou
               <HighlightCard icon="🧨" title="Spoiler index" value={results.spoilers[0]?.name ?? '—'} detail={results.spoilers[0] ? `${results.spoilers[0].count} win${results.spoilers[0].count !== 1 ? 's' : ''} over top-three ranked opposition` : 'No top-three upsets recorded'} />
               <HighlightCard icon="🧹" title="Clean sweep" value={results.cleanSweepLeader?.name ?? '—'} detail={results.cleanSweepLeader ? `${results.cleanSweepLeader.percentage.toFixed(1)}% clean sweeps · ${results.cleanSweepLeader.cleanSweeps} of ${results.cleanSweepLeader.matches} matches with individual game scores` : 'Record individual game scores to calculate 2–0 matches'} />
               <HighlightCard icon="❤️‍🔥" title="Most Comeback Wins" value={results.comebackLeader?.name ?? '—'} detail={results.comebackLeader ? `${results.comebackLeader.wins} match${results.comebackLeader.wins !== 1 ? 'es' : ''} won after losing Game 1` : 'No comeback wins recorded'} />
-              <HighlightCard icon="🗡️" title="Giant Slayer" value={results.giantSlayer?.name ?? '—'} detail={results.giantSlayer ? `${results.giantSlayer.wins} win${results.giantSlayer.wins !== 1 ? 's' : ''} against the top-ranked ${data.rosterType === 'fixed' ? 'team' : 'player'}` : 'No losses by the top-ranked player/team'} />
+              <HighlightCard icon="🗡️" title="Giant Slayer" value={results.giantSlayer?.name ?? '—'} detail={results.giantSlayer ? `${results.giantSlayer.wins} win${results.giantSlayer.wins !== 1 ? 's' : ''} against the top-ranked ${rosterType === 'fixed' ? 'team' : 'player'}` : 'No losses by the top-ranked player/team'} />
             </div>
           )}
         </section>

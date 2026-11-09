@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { GameScore, RosterData, Round } from '../types';
-import { getScore, scoreKey } from '../utils/scoreResults';
+import { calculateResults, getScore, scoreKey } from '../utils/scoreResults';
 import AddRoundsControl from './AddRoundsControl';
 
 interface Props {
@@ -18,6 +18,8 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
   const [selectedRound, setSelectedRound] = useState(initialRoundNumber ?? data.rounds[0]?.roundNumber ?? 1);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const round = data.rounds.find(item => item.roundNumber === selectedRound) ?? data.rounds[0];
+  const standings = useMemo(() => calculateResults(data, scores).standings, [data, scores]);
+  const hasRecordedScores = standings.some(standing => standing.played > 0);
 
   function updateScore(roundNumber: number, courtNumber: number, field: 'team1Score' | 'team2Score', value: string) {
     const score = getScore(scores, roundNumber, courtNumber);
@@ -100,6 +102,43 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
             );
           })}
         </div>
+
+        <details className="mb-5 rounded-2xl border border-violet-500/40 bg-slate-800/70 p-4 sm:p-5">
+          <summary className="cursor-pointer text-base font-semibold text-white">Live leaderboard</summary>
+          <p className="mt-2 text-xs text-slate-400">Updates as scores are entered. Matches at 0–0 and matches marked do not play are excluded.</p>
+          {hasRecordedScores ? (
+            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-700">
+              <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                <thead className="bg-slate-700/70 text-xs uppercase text-slate-300">
+                  <tr>
+                    <th className="px-3 py-3">Rank</th>
+                    <th className="px-3 py-3">{data.rosterType === 'fixed' ? 'Team' : 'Player'}</th>
+                    <th className="px-2 py-3 text-center">W</th>
+                    <th className="px-2 py-3 text-center">L</th>
+                    <th className="px-2 py-3 text-center">D</th>
+                    <th className="px-2 py-3 text-center">Points for</th>
+                    <th className="px-2 py-3 text-center">Against</th>
+                    <th className="px-2 py-3 text-center">Win %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {standings.map((standing, index) => (
+                    <tr key={standing.id} className="border-t border-slate-700/70 text-slate-200">
+                      <td className="px-3 py-3 font-semibold text-slate-400">{index + 1}</td>
+                      <td className="px-3 py-3 font-medium text-white">{standing.name}</td>
+                      <td className="px-2 py-3 text-center text-emerald-300">{standing.wins}</td>
+                      <td className="px-2 py-3 text-center text-rose-300">{standing.losses}</td>
+                      <td className="px-2 py-3 text-center">{standing.draws}</td>
+                      <td className="px-2 py-3 text-center tabular-nums">{standing.pointsFor}</td>
+                      <td className="px-2 py-3 text-center tabular-nums">{standing.pointsAgainst}</td>
+                      <td className="px-2 py-3 text-center font-semibold tabular-nums">{standing.winPercentage.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="mt-4 text-sm text-slate-400">Enter a match score to see the standings.</p>}
+        </details>
 
         <div className="mb-5 flex items-end justify-between gap-3">
           <div>

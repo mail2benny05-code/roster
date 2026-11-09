@@ -7,6 +7,7 @@ A pickleball schedule generator that creates balanced, fair rosters in seconds.
 - **Gender-based** and **Mixed** roster modes
 - Fair sit-out rotation — everyone sits out evenly across all rounds
 - Partnership rotation — same pair never back-to-back
+- Live leaderboard while entering scores, before the round robin is finished
 - Export schedule as a PNG image
 - Share a read-only final results page with a link, including standings and highlights
 - Auth via Netlify Identity (or Cloudflare Access)

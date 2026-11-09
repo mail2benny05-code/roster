@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import netlifyIdentity from 'netlify-identity-widget';
 import type { GameScore, Page, RosterData, SetupState } from './types';
 import { generateRoster } from './utils/rosterGenerator';
+import { reshuffleRounds, swapUnscoredRoundPlayers } from './utils/rosterAdjustments';
 import { saveToHistory } from './utils/historyDB';
 import type { SavedGameEvent, HistoryEntry } from './utils/historyDB';
 import LoginPage from './components/LoginPage';
@@ -220,6 +221,24 @@ function LocalApp() {
     saveToHistory(updatedSetup, { rosterData: extendedRoster, scores, status: 'in-progress', currentRound: rosterData.rounds.length + 1 }).catch(console.error);
   }
 
+  function handleSwapRound(roundNumber: number, firstId: string, secondId: string): boolean {
+    if (!rosterData) return false;
+    const swapped = swapUnscoredRoundPlayers(rosterData, scores, roundNumber, firstId, secondId);
+    if (!swapped) return false;
+    setRosterData({ ...rosterData, rounds: rosterData.rounds.map(round => round.roundNumber === roundNumber ? swapped : round) });
+    return true;
+  }
+
+  function handleReshuffleRemaining(fromRound: number): number | null {
+    if (!rosterData) return null;
+    const lastScoredRound = Math.max(0, ...scores.map(score => score.roundNumber));
+    const startRound = Math.max(fromRound, lastScoredRound + 1);
+    const reshuffled = reshuffleRounds(rosterData, startRound);
+    if (!reshuffled) return null;
+    setRosterData(reshuffled);
+    return startRound;
+  }
+
   function handleEditSetup() {
     setPage('setup');
   }
@@ -280,6 +299,8 @@ function LocalApp() {
           onBack={() => setPage('roster')}
           onFinish={(finalScores) => { setScores(finalScores); setEventStatus('finished'); setPage('results'); }}
           onAddRounds={handleAddRounds}
+          onSwapRound={handleSwapRound}
+          onReshuffleRemaining={handleReshuffleRemaining}
           initialRoundNumber={currentRound}
           onRoundChange={setCurrentRound}
         />

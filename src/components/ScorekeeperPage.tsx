@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { GameScore, RosterData, Round } from '../types';
 import { calculateResults, getScore, scoreKey } from '../utils/scoreResults';
+import { scoredCourtPlayerIds, swapOptions } from '../utils/rosterAdjustments';
 import AddRoundsControl from './AddRoundsControl';
 
 interface Props {
@@ -10,16 +11,26 @@ interface Props {
   onBack: () => void;
   onFinish: (scores: GameScore[]) => void;
   onAddRounds: (count: number) => void;
+  onSwapRound: (roundNumber: number, firstId: string, secondId: string) => boolean;
+  onReshuffleRemaining: (fromRound: number) => number | null;
   initialRoundNumber?: number;
   onRoundChange: (roundNumber: number) => void;
 }
 
-export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, onFinish, onAddRounds, initialRoundNumber, onRoundChange }: Props) {
+export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, onFinish, onAddRounds, onSwapRound, onReshuffleRemaining, initialRoundNumber, onRoundChange }: Props) {
   const [selectedRound, setSelectedRound] = useState(initialRoundNumber ?? data.rounds[0]?.roundNumber ?? 1);
   const [confirmFinish, setConfirmFinish] = useState(false);
+  const [firstSwapId, setFirstSwapId] = useState('');
+  const [secondSwapId, setSecondSwapId] = useState('');
+  const [adjustmentMessage, setAdjustmentMessage] = useState('');
   const round = data.rounds.find(item => item.roundNumber === selectedRound) ?? data.rounds[0];
   const standings = useMemo(() => calculateResults(data, scores).standings, [data, scores]);
   const hasRecordedScores = standings.some(standing => standing.played > 0);
+  const lastScoredRound = Math.max(0, ...scores.map(score => score.roundNumber));
+  const lockedPlayerIds = round ? scoredCourtPlayerIds(round, scores) : new Set<string>();
+  const availableSwaps = round ? swapOptions(data, round).filter(option => !lockedPlayerIds.has(option.id)) : [];
+  const canEditRound = availableSwaps.length >= 2;
+  const reshuffleFrom = Math.max(selectedRound, lastScoredRound + 1);
 
   function updateScore(roundNumber: number, courtNumber: number, field: 'team1Score' | 'team2Score', value: string) {
     const score = getScore(scores, roundNumber, courtNumber);
@@ -49,7 +60,34 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
 
   function selectRound(roundNumber: number) {
     setSelectedRound(roundNumber);
+    setFirstSwapId('');
+    setSecondSwapId('');
+    setAdjustmentMessage('');
     onRoundChange(roundNumber);
+  }
+
+  function applySwap() {
+    if (!firstSwapId || !secondSwapId || firstSwapId === secondSwapId) {
+      setAdjustmentMessage('Choose two different players or teams.');
+      return;
+    }
+    if (onSwapRound(selectedRound, firstSwapId, secondSwapId)) {
+      setFirstSwapId('');
+      setSecondSwapId('');
+      setAdjustmentMessage('Players swapped in this round.');
+    } else {
+      setAdjustmentMessage('That swap would break the partner or sit-out rules, or involve a scored court. Try another pair.');
+    }
+  }
+
+  function reshuffleRemaining() {
+    const start = onReshuffleRemaining(selectedRound);
+    if (start === null) {
+      setAdjustmentMessage('No unscored rounds remain to reshuffle.');
+      return;
+    }
+    selectRound(start);
+    setAdjustmentMessage(`Rounds ${start}–${data.rounds.length} reshuffled. Earlier rounds and scores are preserved.`);
   }
 
   function confirmAndFinish() {
@@ -138,6 +176,32 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
               </table>
             </div>
           ) : <p className="mt-4 text-sm text-slate-400">Enter a match score to see the standings.</p>}
+        </details>
+
+        <details className="mb-5 rounded-2xl border border-slate-700 bg-slate-800/70 p-4 sm:p-5">
+          <summary className="cursor-pointer text-base font-semibold text-white">Adjust players and rounds</summary>
+          <p className="mt-2 text-sm text-slate-400">Swap players on unscored courts or swap with someone sitting out. Scored courts stay fixed. Mixed partnerships stay valid; fixed partners move as pairs.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm text-slate-300">First player or pair
+              <select value={firstSwapId} onChange={event => setFirstSwapId(event.target.value)} disabled={!canEditRound} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-600 bg-slate-900 px-3 text-white disabled:opacity-50">
+                <option value="">Select</option>
+                {availableSwaps.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="text-sm text-slate-300">Second player or pair
+              <select value={secondSwapId} onChange={event => setSecondSwapId(event.target.value)} disabled={!canEditRound} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-600 bg-slate-900 px-3 text-white disabled:opacity-50">
+                <option value="">Select</option>
+                {availableSwaps.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+          {!canEditRound && <p className="mt-3 text-xs text-amber-300">Fewer than two players or teams are available to swap in this round. Select another round.</p>}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button onClick={applySwap} disabled={!canEditRound} className="min-h-11 rounded-xl bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50">Swap players</button>
+            <button onClick={reshuffleRemaining} disabled={reshuffleFrom > data.rounds.length} className="min-h-11 rounded-xl border border-slate-500 px-4 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">Reshuffle rounds {reshuffleFrom}–{data.rounds.length}</button>
+          </div>
+          <p className="mt-3 text-xs text-slate-400">A manual swap can affect rotation fairness. Reshuffling later rounds uses the earlier rounds when planning the new rotation.</p>
+          {adjustmentMessage && <p role="status" className="mt-3 text-sm text-violet-200">{adjustmentMessage}</p>}
         </details>
 
         <div className="mb-5 flex items-end justify-between gap-3">

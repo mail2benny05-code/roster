@@ -124,7 +124,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
                   <label htmlFor={`r${round.roundNumber}c${court.courtNumber}t1`} className="min-w-0 text-sm font-medium text-white">{players1}</label>
                   <input
                     id={`r${round.roundNumber}c${court.courtNumber}t1`}
-                    type="number" min="0" inputMode="numeric" value={score.team1Score || ''}
+                    type="number" min="0" inputMode="numeric" value={score.team1Score}
                     onChange={event => updateScore(round.roundNumber, court.courtNumber, 'team1Score', event.target.value)}
                     aria-label={`${players1} score`}
                     className="h-12 w-full rounded-xl border border-slate-600 bg-slate-900 text-center text-xl font-bold text-white outline-none focus:border-violet-400"
@@ -132,7 +132,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
                   <label htmlFor={`r${round.roundNumber}c${court.courtNumber}t2`} className="min-w-0 text-sm font-medium text-white">{players2}</label>
                   <input
                     id={`r${round.roundNumber}c${court.courtNumber}t2`}
-                    type="number" min="0" inputMode="numeric" value={score.team2Score || ''}
+                    type="number" min="0" inputMode="numeric" value={score.team2Score}
                     onChange={event => updateScore(round.roundNumber, court.courtNumber, 'team2Score', event.target.value)}
                     aria-label={`${players2} score`}
                     className="h-12 w-full rounded-xl border border-slate-600 bg-slate-900 text-center text-xl font-bold text-white outline-none focus:border-violet-400"
@@ -146,11 +146,11 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
                       return (
                         <div key={gameIndex} className="grid grid-cols-[1fr_64px_64px] items-center gap-2 text-xs text-slate-400">
                           <span>Game {gameIndex + 1}</span>
-                          <input type="number" min="0" inputMode="numeric" value={game?.team1Score || ''}
+                          <input type="number" min="0" inputMode="numeric" value={game?.team1Score ?? ''}
                             aria-label={`${players1}, game ${gameIndex + 1} score`}
                             onChange={event => updateGameScore(round.roundNumber, court.courtNumber, gameIndex, 'team1Score', event.target.value)}
                             className="h-10 w-full rounded-lg border border-slate-600 bg-slate-950 text-center text-base font-semibold text-white outline-none focus:border-violet-400" />
-                          <input type="number" min="0" inputMode="numeric" value={game?.team2Score || ''}
+                          <input type="number" min="0" inputMode="numeric" value={game?.team2Score ?? ''}
                             aria-label={`${players2}, game ${gameIndex + 1} score`}
                             onChange={event => updateGameScore(round.roundNumber, court.courtNumber, gameIndex, 'team2Score', event.target.value)}
                             className="h-10 w-full rounded-lg border border-slate-600 bg-slate-950 text-center text-base font-semibold text-white outline-none focus:border-violet-400" />

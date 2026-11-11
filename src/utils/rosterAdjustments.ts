@@ -1,4 +1,4 @@
-import type { GameScore, Player, RosterData, Round } from '../types';
+import type { Player, RosterData, Round } from '../types';
 import { generateRoster } from './rosterGenerator';
 
 export function reshuffleRounds(data: RosterData, fromRound: number): RosterData | null {
@@ -16,21 +16,6 @@ export function reshuffleRounds(data: RosterData, fromRound: number): RosterData
     previousRounds.length ? { ...data, rounds: previousRounds } : undefined,
   );
   return { ...data, rounds: [...previousRounds, ...extension.rounds] };
-}
-
-export function scoredCourtPlayerIds(round: Round, scores: GameScore[]): Set<string> {
-  const scoredCourts = new Set(scores.filter(score => score.roundNumber === round.roundNumber).map(score => score.courtNumber));
-  return new Set(round.courts
-    .filter(court => scoredCourts.has(court.courtNumber))
-    .flatMap(court => [...court.team1, ...court.team2].map(player => player.id)));
-}
-
-export function swapUnscoredRoundPlayers(data: RosterData, scores: GameScore[], roundNumber: number, firstId: string, secondId: string): Round | null {
-  const round = data.rounds.find(item => item.roundNumber === roundNumber);
-  if (!round) return null;
-  const locked = scoredCourtPlayerIds(round, scores);
-  if (locked.has(firstId) || locked.has(secondId)) return null;
-  return swapRoundPlayers(data, roundNumber, firstId, secondId);
 }
 
 export function swapOptions(data: RosterData, round: Round): Array<{ id: string; label: string }> {

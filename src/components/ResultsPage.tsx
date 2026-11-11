@@ -114,19 +114,21 @@ export default function ResultsPage(props: Props) {
     const title = escape(sessionName || 'Round robin results');
     const podiumRows = activeStandings.slice(0, 3).map((standing, index) => `<li><strong>${index + 1}. ${escape(standing.name)}</strong> — ${standing.wins} wins, ${standing.losses} losses, ${standing.winPercentage.toFixed(1)}% win rate</li>`).join('');
     const tableRows = results.standings.map((standing, index) => `<tr><td>${index + 1}</td><th scope="row">${escape(standing.name)}</th><td>${standing.wins}</td><td>${standing.losses}</td><td>${standing.pointsFor}</td><td>${standing.pointsAgainst}</td><td>${standing.winPercentage.toFixed(1)}%</td></tr>`).join('');
+    const playerCards = results.standings.map(standing => {
+      const card = results.playerCards?.find(item => item.id === standing.id);
+      return `<details class="card"><summary><strong>${escape(standing.name)}</strong> · ${standing.wins}W · ${standing.losses}L</summary><p><strong>Best partner:</strong> ${card?.bestPartner ? `${escape(card.bestPartner.name)} · ${card.bestPartner.wins} wins together` : 'No wins with a partner'}</p><p><strong>Toughest opponent:</strong> ${card?.toughestOpponent ? `${escape(card.toughestOpponent.name)} · ${card.toughestOpponent.losses} losses` : 'No losses'}</p><p><strong>Best win:</strong> ${card?.bestWin ? `${escape(card.bestWin.score)} vs ${escape(card.bestWin.opponent)} · +${card.bestWin.margin}` : 'No wins'}</p><p><strong>Badges:</strong> ${card?.badges.length ? card.badges.map(escape).join(', ') : 'No badges yet'}</p></details>`;
+    }).join('');
     const highlights = [
       `<li><strong>Dominant performance:</strong> ${escape(dominant?.name ?? '—')}${dominant ? ` (${dominant.wins} wins, ${dominant.pointDifference >= 0 ? '+' : ''}${dominant.pointDifference} point difference)` : ''}</li>`,
       `<li><strong>Most wins:</strong> ${escape(mostWins?.name ?? '—')}${mostWins ? ` (${mostWins.wins})` : ''}</li>`,
       `<li><strong>Biggest win:</strong> ${results.biggestWin ? `${escape(results.biggestWin.winner)} ${results.biggestWin.winnerScore}–${results.biggestWin.loserScore} ${escape(results.biggestWin.loser)}` : 'No decisive scores'}</li>`,
       `<li><strong>Toughest fight:</strong> ${results.toughestLoss ? `${escape(results.toughestLoss.name)} (average loss margin ${results.toughestLoss.averageMargin.toFixed(1)})` : 'No losses recorded'}</li>`,
+      `<li><strong>Heartbreaker:</strong> ${results.heartbreaker ? `${escape(results.heartbreaker.name)} (${results.heartbreaker.count} losses by 1 or 2 points)` : 'No losses by 1 or 2 points'}</li>`,
       `<li><strong>Spoiler index:</strong> ${results.spoilers.length ? results.spoilers.map(item => `${escape(item.name)} (${item.count})`).join(', ') : 'No top-three upsets'}</li>`,
-      `<li><strong>Clean sweep:</strong> ${results.cleanSweepLeader ? `${escape(results.cleanSweepLeader.name)} (${results.cleanSweepLeader.percentage.toFixed(1)}%, ${results.cleanSweepLeader.cleanSweeps}/${results.cleanSweepLeader.matches} recorded matches)` : 'No individual game scores recorded'}</li>`,
-      `<li><strong>Most Comeback Wins:</strong> ${results.comebackLeader ? `${escape(results.comebackLeader.name)} (${results.comebackLeader.wins} comeback wins)` : 'No comeback wins recorded'}</li>`,
-      `<li><strong>Giant Slayer:</strong> ${results.giantSlayer ? `${escape(results.giantSlayer.name)} (${results.giantSlayer.wins} wins over the top-ranked ${rosterType === 'fixed' ? 'team' : 'player'})` : 'No losses by the top-ranked player/team'}</li>`,
     ].join('');
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>
       *{box-sizing:border-box}body{margin:0;padding:32px;background:#f1f5f9;color:#0f172a;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}.page{max-width:1000px;margin:auto;background:white;border-radius:22px;padding:32px;box-shadow:0 16px 50px #0f172a18}h1{margin:0;font-size:32px}h2{margin:28px 0 10px;font-size:21px}.muted{color:#64748b}.podium{padding:18px 24px;border-radius:16px;background:linear-gradient(135deg,#fef3c7,#f5f3ff)}.podium li,.highlights li{margin:8px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:left}thead{background:#f8fafc}td:not(:nth-child(2)){text-align:center}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{padding:16px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.card strong{display:block;margin-bottom:5px;color:#6d28d9}@media(max-width:600px){body{padding:10px}.page{padding:18px;overflow-x:auto}h1{font-size:25px}table{min-width:620px}}
-      </style></head><body><main class="page"><p class="muted">RallyQ · Final results</p><h1>${title}</h1><p class="muted">${playedCount} games recorded · ${doNotPlayCount} marked do not play · ${rosterType === 'fixed' ? 'Team standings' : 'Player standings'}</p><h2>Top finishers</h2><ol class="podium">${podiumRows || '<li>No games were recorded.</li>'}</ol><h2>Standings</h2><table><thead><tr><th>Rank</th><th>${rosterType === 'fixed' ? 'Team' : 'Player'}</th><th>W</th><th>L</th><th>Points earned</th><th>Points given</th><th>Win %</th></tr></thead><tbody>${tableRows}</tbody></table><h2>Game highlights</h2><ul class="highlights">${highlights}</ul></main></body></html>`;
+      </style></head><body><main class="page"><p class="muted">RallyQ · Final results</p><h1>${title}</h1><p class="muted">${playedCount} games recorded · ${doNotPlayCount} marked do not play · ${rosterType === 'fixed' ? 'Team standings' : 'Player standings'}</p><h2>Top finishers</h2><ol class="podium">${podiumRows || '<li>No games were recorded.</li>'}</ol><h2>Standings</h2><table><thead><tr><th>Rank</th><th>${rosterType === 'fixed' ? 'Team' : 'Player'}</th><th>W</th><th>L</th><th>Points earned</th><th>Points given</th><th>Win %</th></tr></thead><tbody>${tableRows}</tbody></table><h2>${rosterType === 'fixed' ? 'Team cards' : 'Player cards'}</h2>${playerCards}<h2>Game highlights</h2><ul class="highlights">${highlights}</ul></main></body></html>`;
     const objectUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     downloadUrl(objectUrl, `${sessionName || 'round-robin-results'}.html`);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
@@ -212,6 +214,28 @@ export default function ResultsPage(props: Props) {
             </div>
         </section>
 
+        <section className="mb-8" aria-label={rosterType === 'fixed' ? 'Team cards' : 'Player cards'}>
+          <h2 className="mb-4 text-xl font-bold">{rosterType === 'fixed' ? 'Team cards' : 'Player cards'}</h2>
+          <div className="space-y-3">
+            {results.standings.map(standing => {
+              const card = results.playerCards?.find(item => item.id === standing.id);
+              return (
+                <details key={standing.id} className="rounded-2xl border border-slate-700 bg-slate-800/60 p-4">
+                  <summary className="cursor-pointer text-base font-semibold">{standing.name} <span className="ml-2 text-sm font-normal text-slate-400">{standing.wins}W · {standing.losses}L</span></summary>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div><p className="text-xs uppercase text-slate-400">Best partner</p><p className="mt-1 font-medium">{card?.bestPartner ? `${card.bestPartner.name} · ${card.bestPartner.wins} wins together` : 'No wins with a partner'}</p></div>
+                    <div><p className="text-xs uppercase text-slate-400">Toughest opponent</p><p className="mt-1 font-medium">{card?.toughestOpponent ? `${card.toughestOpponent.name} · ${card.toughestOpponent.losses} losses` : 'No losses'}</p></div>
+                    <div><p className="text-xs uppercase text-slate-400">Best win</p><p className="mt-1 font-medium">{card?.bestWin ? `${card.bestWin.score} vs ${card.bestWin.opponent} · +${card.bestWin.margin}` : 'No wins'}</p></div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2" aria-label="Badges">
+                    {card?.badges.length ? card.badges.map(badge => <span key={badge} className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200">{badge}</span>) : <span className="text-sm text-slate-400">No badges yet</span>}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </section>
+
         <section>
           <div className="mb-4">
             <h2 className="text-xl font-bold">Game highlights</h2>
@@ -224,11 +248,9 @@ export default function ResultsPage(props: Props) {
               <HighlightCard icon="👑" title="Dominant performance" value={dominant?.name ?? '—'} detail={dominant ? `${dominant.wins} wins · ${dominant.winPercentage.toFixed(0)}% win rate · ${dominant.pointDifference >= 0 ? '+' : ''}${dominant.pointDifference} point differential` : 'No completed games'} />
               <HighlightCard icon="🚀" title="Biggest win" value={results.biggestWin?.winner ?? '—'} detail={results.biggestWin ? `${results.biggestWin.winnerScore}–${results.biggestWin.loserScore}, a ${results.biggestWin.margin}-point margin over ${results.biggestWin.loser}` : 'No decisive scores recorded'} />
               <HighlightCard icon="💪" title="Toughest fight" value={results.toughestLoss?.name ?? '—'} detail={results.toughestLoss ? `${results.toughestLoss.losses} loss${results.toughestLoss.losses !== 1 ? 'es' : ''} with an average losing margin of ${results.toughestLoss.averageMargin.toFixed(1)} points` : 'No losses recorded'} />
+              <HighlightCard icon="💔" title="Heartbreaker" value={results.heartbreaker?.name ?? '—'} detail={results.heartbreaker ? `${results.heartbreaker.count} match${results.heartbreaker.count !== 1 ? 'es' : ''} lost by 1 or 2 points` : 'No losses by 1 or 2 points'} />
               <HighlightCard icon="🏅" title="Most wins" value={mostWins?.name ?? '—'} detail={mostWins ? `${mostWins.wins} match${mostWins.wins !== 1 ? 'es' : ''} won` : 'No wins recorded'} />
               <HighlightCard icon="🧨" title="Spoiler index" value={results.spoilers[0]?.name ?? '—'} detail={results.spoilers[0] ? `${results.spoilers[0].count} win${results.spoilers[0].count !== 1 ? 's' : ''} over top-three ranked opposition` : 'No top-three upsets recorded'} />
-              <HighlightCard icon="🧹" title="Clean sweep" value={results.cleanSweepLeader?.name ?? '—'} detail={results.cleanSweepLeader ? `${results.cleanSweepLeader.percentage.toFixed(1)}% clean sweeps · ${results.cleanSweepLeader.cleanSweeps} of ${results.cleanSweepLeader.matches} matches with individual game scores` : 'Record individual game scores to calculate 2–0 matches'} />
-              <HighlightCard icon="❤️‍🔥" title="Most Comeback Wins" value={results.comebackLeader?.name ?? '—'} detail={results.comebackLeader ? `${results.comebackLeader.wins} match${results.comebackLeader.wins !== 1 ? 'es' : ''} won after losing Game 1` : 'No comeback wins recorded'} />
-              <HighlightCard icon="🗡️" title="Giant Slayer" value={results.giantSlayer?.name ?? '—'} detail={results.giantSlayer ? `${results.giantSlayer.wins} win${results.giantSlayer.wins !== 1 ? 's' : ''} against the top-ranked ${rosterType === 'fixed' ? 'team' : 'player'}` : 'No losses by the top-ranked player/team'} />
             </div>
           )}
         </section>

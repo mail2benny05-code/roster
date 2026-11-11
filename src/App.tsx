@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import netlifyIdentity from 'netlify-identity-widget';
 import type { GameScore, Page, RosterData, SetupState } from './types';
 import { generateRoster } from './utils/rosterGenerator';
-import { reshuffleRounds, swapUnscoredRoundPlayers } from './utils/rosterAdjustments';
+import { reshuffleRounds, swapRoundPlayers } from './utils/rosterAdjustments';
 import { saveToHistory } from './utils/historyDB';
 import type { SavedGameEvent, HistoryEntry } from './utils/historyDB';
 import LoginPage from './components/LoginPage';
@@ -223,7 +223,7 @@ function LocalApp() {
 
   function handleSwapRound(roundNumber: number, firstId: string, secondId: string): boolean {
     if (!rosterData) return false;
-    const swapped = swapUnscoredRoundPlayers(rosterData, scores, roundNumber, firstId, secondId);
+    const swapped = swapRoundPlayers(rosterData, roundNumber, firstId, secondId);
     if (!swapped) return false;
     setRosterData({ ...rosterData, rounds: rosterData.rounds.map(round => round.roundNumber === roundNumber ? swapped : round) });
     return true;

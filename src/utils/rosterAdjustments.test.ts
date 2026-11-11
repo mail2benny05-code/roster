@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Player, RosterData } from '../types';
-import { reshuffleRounds, scoredCourtPlayerIds, swapOptions, swapRoundPlayers, swapUnscoredRoundPlayers } from './rosterAdjustments';
+import { reshuffleRounds, swapOptions, swapRoundPlayers } from './rosterAdjustments';
 
 function player(id: string, gender?: Player['gender']): Player {
   return { id, name: id.toUpperCase(), gender };
@@ -63,7 +63,7 @@ describe('manual round swaps', () => {
     expect(reshuffleRounds(data, 3)).toBeNull();
   });
 
-  it('keeps scored courts fixed while other courts can still be adjusted', () => {
+  it('allows repeated swaps on a scored court while preserving scores by court', () => {
     const players = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map(id => player(id));
     const data = roster(players, 'gender', [{
       roundNumber: 1,
@@ -74,12 +74,11 @@ describe('manual round swaps', () => {
       sittingOut: [players[8]],
     }]);
     data.numCourts = 2;
-    const scores = [{ roundNumber: 1, courtNumber: 1, team1Score: 11, team2Score: 5 }];
-    expect([...scoredCourtPlayerIds(data.rounds[0], scores)]).toEqual(['a', 'b', 'c', 'd']);
-    expect(swapUnscoredRoundPlayers(data, scores, 1, 'a', 'i')).toBeNull();
-    const swapped = swapUnscoredRoundPlayers(data, scores, 1, 'e', 'i');
-    expect(swapped?.courts[0]).toEqual(data.rounds[0].courts[0]);
-    expect(swapped?.courts[1].team1[0].id).toBe('i');
-    expect(swapped?.sittingOut[0].id).toBe('e');
+    const swapped = swapRoundPlayers(data, 1, 'a', 'i');
+    expect(swapped?.courts[0].team1[0].id).toBe('i');
+    expect(swapped?.sittingOut[0].id).toBe('a');
+    const twice = swapRoundPlayers({ ...data, rounds: [swapped!] }, 1, 'b', 'e');
+    expect(twice?.courts[0].team1.map(player => player.id)).toEqual(['i', 'e']);
+    expect(twice?.courts[1].team1[0].id).toBe('b');
   });
 });

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { GameScore, RosterData, Round } from '../types';
 import { calculateResults, getScore, scoreKey } from '../utils/scoreResults';
-import { scoredCourtPlayerIds, swapOptions } from '../utils/rosterAdjustments';
+import { swapOptions } from '../utils/rosterAdjustments';
 import AddRoundsControl from './AddRoundsControl';
 
 interface Props {
@@ -27,25 +27,24 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
   const standings = useMemo(() => calculateResults(data, scores).standings, [data, scores]);
   const hasRecordedScores = standings.some(standing => standing.played > 0);
   const lastScoredRound = Math.max(0, ...scores.map(score => score.roundNumber));
-  const lockedPlayerIds = round ? scoredCourtPlayerIds(round, scores) : new Set<string>();
-  const availableSwaps = round ? swapOptions(data, round).filter(option => !lockedPlayerIds.has(option.id)) : [];
+  const availableSwaps = round ? swapOptions(data, round) : [];
   const canEditRound = availableSwaps.length >= 2;
   const reshuffleFrom = Math.max(selectedRound, lastScoredRound + 1);
 
   function updateScore(roundNumber: number, courtNumber: number, field: 'team1Score' | 'team2Score', value: string) {
     const score = getScore(scores, roundNumber, courtNumber);
-    const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
+    const parsed = value === '' ? null : Math.max(0, Number.parseInt(value, 10) || 0);
     const updated = { ...score, [field]: parsed, doNotPlay: false };
     const key = scoreKey(roundNumber, courtNumber);
     onScoreChange([...scores.filter(item => scoreKey(item.roundNumber, item.courtNumber) !== key), updated]);
   }
 
-  function updateGameScore(roundNumber: number, courtNumber: number, gameIndex: number, field: 'team1Score' | 'team2Score', value: string) {
+  function toggleDoNotPlay(roundNumber: number, courtNumber: number) {
     const score = getScore(scores, roundNumber, courtNumber);
-    const games = Array.from({ length: 3 }, (_, index) => score.games?.[index] ?? { team1Score: 0, team2Score: 0 });
-    games[gameIndex] = { ...games[gameIndex], [field]: Math.max(0, Number.parseInt(value, 10) || 0) };
-    const updated = { ...score, games, doNotPlay: false };
     const key = scoreKey(roundNumber, courtNumber);
+    const updated = score.doNotPlay
+      ? { ...score, doNotPlay: false }
+      : { ...score, team1Score: null, team2Score: null, games: undefined, doNotPlay: true };
     onScoreChange([...scores.filter(item => scoreKey(item.roundNumber, item.courtNumber) !== key), updated]);
   }
 
@@ -76,7 +75,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
       setSecondSwapId('');
       setAdjustmentMessage('Players swapped in this round.');
     } else {
-      setAdjustmentMessage('That swap would break the partner or sit-out rules, or involve a scored court. Try another pair.');
+      setAdjustmentMessage('That swap would break the partner or sit-out rules. Try another pair.');
     }
   }
 
@@ -93,7 +92,9 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
   function confirmAndFinish() {
     const finalScores = data.rounds.flatMap(gameRound => gameRound.courts.map(court => {
       const score = getScore(scores, gameRound.roundNumber, court.courtNumber);
-      return score.team1Score === 0 && score.team2Score === 0 ? { ...score, doNotPlay: true } : score;
+      return score.doNotPlay || (score.team1Score !== null && score.team2Score !== null)
+        ? score
+        : { ...score, team1Score: null, team2Score: null, games: undefined, doNotPlay: true };
     }));
     setConfirmFinish(false);
     onFinish(finalScores);
@@ -102,11 +103,11 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
   if (!round) return null;
   const countRoundComplete = (gameRound: Round) => gameRound.courts.every(court => {
     const score = getScore(scores, gameRound.roundNumber, court.courtNumber);
-    return score.doNotPlay || score.team1Score !== 0 || score.team2Score !== 0;
+    return score.doNotPlay || (score.team1Score !== null && score.team2Score !== null);
   });
   const unfinishedCount = data.rounds.reduce((sum, gameRound) => sum + gameRound.courts.filter(court => {
     const score = getScore(scores, gameRound.roundNumber, court.courtNumber);
-    return !score.doNotPlay && score.team1Score === 0 && score.team2Score === 0;
+    return !score.doNotPlay && (score.team1Score === null || score.team2Score === null);
   }).length, 0);
 
   return (
@@ -143,7 +144,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
 
         <details className="mb-5 rounded-2xl border border-violet-500/40 bg-slate-800/70 p-4 sm:p-5">
           <summary className="cursor-pointer text-base font-semibold text-white">Live leaderboard</summary>
-          <p className="mt-2 text-xs text-slate-400">Updates as scores are entered. Matches at 0–0 and matches marked do not play are excluded.</p>
+          <p className="mt-2 text-xs text-slate-400">Updates when both scores are entered. Matches marked do not play are excluded.</p>
           {hasRecordedScores ? (
             <div className="mt-4 overflow-x-auto rounded-xl border border-slate-700">
               <table className="w-full min-w-[560px] border-collapse text-left text-sm">
@@ -180,7 +181,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
 
         <details className="mb-5 rounded-2xl border border-slate-700 bg-slate-800/70 p-4 sm:p-5">
           <summary className="cursor-pointer text-base font-semibold text-white">Adjust players and rounds</summary>
-          <p className="mt-2 text-sm text-slate-400">Swap players on unscored courts or swap with someone sitting out. Scored courts stay fixed. Mixed partnerships stay valid; fixed partners move as pairs.</p>
+          <p className="mt-2 text-sm text-slate-400">Swap players at any time, including after entering scores. You can make multiple swaps in a round. Mixed partnerships stay valid; fixed partners move as pairs.</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="text-sm text-slate-300">First player or pair
               <select value={firstSwapId} onChange={event => setFirstSwapId(event.target.value)} disabled={!canEditRound} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-600 bg-slate-900 px-3 text-white disabled:opacity-50">
@@ -207,7 +208,7 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
         <div className="mb-5 flex items-end justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold">Round {round.roundNumber}</h2>
-            <p className="mt-1 text-sm text-slate-400">Enter the match score, or expand to record each game for comeback stats.</p>
+            <p className="mt-1 text-sm text-slate-400">Enter the match score for each team.</p>
           </div>
           <span className="text-xs text-slate-400">{unfinishedCount} unfinished</span>
         </div>
@@ -221,13 +222,13 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
               <article key={court.courtNumber} className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4 sm:p-5">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-slate-200">Court {court.courtNumber}</h3>
-                  {score.doNotPlay && <span className="rounded-full bg-slate-700 px-2.5 py-1 text-xs text-slate-300">Do not play</span>}
+                  {score.doNotPlay && <span className="rounded-full bg-slate-700 px-2.5 py-1 text-xs text-slate-300">DNP</span>}
                 </div>
                 <div className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-x-3 gap-y-3 sm:grid-cols-[minmax(0,1fr)_90px]">
                   <label htmlFor={`r${round.roundNumber}c${court.courtNumber}t1`} className="min-w-0 text-sm font-medium text-white">{players1}</label>
                   <input
                     id={`r${round.roundNumber}c${court.courtNumber}t1`}
-                    type="number" min="0" inputMode="numeric" value={score.team1Score}
+                    type="number" min="0" inputMode="numeric" value={score.team1Score ?? ''}
                     onChange={event => updateScore(round.roundNumber, court.courtNumber, 'team1Score', event.target.value)}
                     aria-label={`${players1} score`}
                     className="h-12 w-full rounded-xl border border-slate-600 bg-slate-900 text-center text-xl font-bold text-white outline-none focus:border-violet-400"
@@ -235,34 +236,16 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
                   <label htmlFor={`r${round.roundNumber}c${court.courtNumber}t2`} className="min-w-0 text-sm font-medium text-white">{players2}</label>
                   <input
                     id={`r${round.roundNumber}c${court.courtNumber}t2`}
-                    type="number" min="0" inputMode="numeric" value={score.team2Score}
+                    type="number" min="0" inputMode="numeric" value={score.team2Score ?? ''}
                     onChange={event => updateScore(round.roundNumber, court.courtNumber, 'team2Score', event.target.value)}
                     aria-label={`${players2} score`}
                     className="h-12 w-full rounded-xl border border-slate-600 bg-slate-900 text-center text-xl font-bold text-white outline-none focus:border-violet-400"
                   />
                 </div>
-                <details className="mt-4 rounded-xl border border-slate-700/70 bg-slate-900/50 p-3">
-                  <summary className="cursor-pointer text-xs font-medium text-slate-300">Record individual game scores (best of 3)</summary>
-                  <div className="mt-3 space-y-2">
-                    {[0, 1, 2].map(gameIndex => {
-                      const game = score.games?.[gameIndex];
-                      return (
-                        <div key={gameIndex} className="grid grid-cols-[1fr_64px_64px] items-center gap-2 text-xs text-slate-400">
-                          <span>Game {gameIndex + 1}</span>
-                          <input type="number" min="0" inputMode="numeric" value={game?.team1Score ?? ''}
-                            aria-label={`${players1}, game ${gameIndex + 1} score`}
-                            onChange={event => updateGameScore(round.roundNumber, court.courtNumber, gameIndex, 'team1Score', event.target.value)}
-                            className="h-10 w-full rounded-lg border border-slate-600 bg-slate-950 text-center text-base font-semibold text-white outline-none focus:border-violet-400" />
-                          <input type="number" min="0" inputMode="numeric" value={game?.team2Score ?? ''}
-                            aria-label={`${players2}, game ${gameIndex + 1} score`}
-                            onChange={event => updateGameScore(round.roundNumber, court.courtNumber, gameIndex, 'team2Score', event.target.value)}
-                            className="h-10 w-full rounded-lg border border-slate-600 bg-slate-950 text-center text-base font-semibold text-white outline-none focus:border-violet-400" />
-                        </div>
-                      );
-                    })}
-                    <p className="text-xs text-slate-500">Leave unused games blank. These scores power clean-sweep and comeback metrics.</p>
-                  </div>
-                </details>
+                <button type="button" onClick={() => toggleDoNotPlay(round.roundNumber, court.courtNumber)}
+                  className="mt-4 min-h-10 rounded-xl border border-slate-600 px-3 text-sm text-slate-200 hover:bg-slate-700">
+                  {score.doNotPlay ? 'Undo DNP' : 'Mark DNP (do not play)'}
+                </button>
               </article>
             );
           })}
@@ -288,12 +271,12 @@ export default function ScorekeeperPage({ data, scores, onScoreChange, onBack, o
             <h2 id="unfinished-title" className="text-lg font-bold text-white">{unfinishedCount ? 'Unfinished games remain' : 'Finish round robin?'}</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-300">
               {unfinishedCount
-                ? `${unfinishedCount} game${unfinishedCount !== 1 ? 's are' : ' is'} still at 0–0. Confirm that these games should be marked as “Do not play” and excluded from the results.`
+                ? `${unfinishedCount} game${unfinishedCount !== 1 ? 's have' : ' has'} an incomplete score. Confirm to mark them DNP (do not play) and exclude them from the results. Any partial scores will be cleared.`
                 : 'All games are completed. Are you sure you want to finish the round robin and view the final results?'}
             </p>
             <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button onClick={() => setConfirmFinish(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 text-sm font-semibold text-slate-200 hover:bg-slate-700">Keep playing</button>
-              <button onClick={confirmAndFinish} className="min-h-11 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-500">{unfinishedCount ? 'Mark Do not play & finish' : 'Yes, finish round robin'}</button>
+              <button onClick={confirmAndFinish} className="min-h-11 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-500">{unfinishedCount ? 'Mark DNP & finish' : 'Yes, finish round robin'}</button>
             </div>
           </div>
         </div>

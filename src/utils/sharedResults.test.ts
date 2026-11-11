@@ -24,7 +24,7 @@ const roster: RosterData = {
 describe('shared results links', () => {
   it('reopens a complete results snapshot without roster or score history', async () => {
     const summary = createResultsSummary(roster, [{
-      roundNumber: 1, courtNumber: 1, team1Score: 11, team2Score: 0,
+      roundNumber: 1, courtNumber: 1, team1Score: 11, team2Score: 10,
       games: [{ team1Score: 11, team2Score: 0 }, { team1Score: 11, team2Score: 0 }],
     }]);
     const payload = await encodeResultsSummary(summary);
@@ -33,7 +33,9 @@ describe('shared results links', () => {
     expect(reopened).toEqual(summary);
     expect(reopened.playedCount).toBe(1);
     expect(reopened.results.standings[0]).toMatchObject({ name: 'Alex & Blair', wins: 1, pointsFor: 11 });
-    expect(reopened.results.cleanSweepLeader).toMatchObject({ name: 'Alex & Blair', cleanSweeps: 1 });
+    expect(reopened.results.heartbreaker).toEqual({ name: 'Casey & Drew', count: 1 });
+    expect(reopened.results.playerCards).toEqual(summary.results.playerCards);
+    expect(reopened.results.spoilers).toEqual([]);
     expect(payload).not.toContain('Friday games');
   });
 

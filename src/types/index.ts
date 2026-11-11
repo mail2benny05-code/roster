@@ -45,10 +45,9 @@ export interface SetupState {
 export interface GameScore {
   roundNumber: number;
   courtNumber: number;
-  team1Score: number;
-  team2Score: number;
-  /** Per-game scores for best-of-three matches. When present, these determine
-   * clean sweeps and comeback wins; the top-level scores remain match totals. */
-  games?: Array<{ team1Score: number; team2Score: number }>;
+  team1Score: number | null;
+  team2Score: number | null;
+  /** Legacy individual game scores retained in saved events. */
+  games?: Array<{ team1Score: number | null; team2Score: number | null }>;
   doNotPlay?: boolean;
 }

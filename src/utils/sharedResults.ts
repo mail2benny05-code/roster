@@ -121,14 +121,14 @@ function isResultsSummary(value: unknown): value is ResultsSummary {
       ['winnerScore', 'loserScore', 'margin'].every(field => isNumber((results.biggestWin as Record<string, unknown>)[field])))) &&
     (results.toughestLoss === null || (isObject(results.toughestLoss) &&
       typeof results.toughestLoss.name === 'string' && isNumber(results.toughestLoss.averageMargin) && isNumber(results.toughestLoss.losses))) &&
+    (results.heartbreaker === undefined || results.heartbreaker === null || isNamedCount(results.heartbreaker)) &&
     Array.isArray(results.spoilers) && results.spoilers.every(isNamedCount) &&
-    (results.cleanSweepLeader === null || (isObject(results.cleanSweepLeader) &&
-      typeof results.cleanSweepLeader.name === 'string' &&
-      ['percentage', 'cleanSweeps', 'matches'].every(field => isNumber((results.cleanSweepLeader as Record<string, unknown>)[field])))) &&
-    (results.comebackLeader === null ||
-      (isObject(results.comebackLeader) && typeof results.comebackLeader.name === 'string' && isNumber(results.comebackLeader.wins))) &&
-    (results.giantSlayer === null || (isObject(results.giantSlayer) &&
-      typeof results.giantSlayer.name === 'string' && isNumber(results.giantSlayer.wins)));
+    (results.playerCards === undefined || (Array.isArray(results.playerCards) && results.playerCards.every((card: unknown) =>
+      isObject(card) && typeof card.id === 'string' &&
+      (card.bestPartner === null || (isObject(card.bestPartner) && typeof card.bestPartner.name === 'string' && isNumber(card.bestPartner.wins))) &&
+      (card.toughestOpponent === null || (isObject(card.toughestOpponent) && typeof card.toughestOpponent.name === 'string' && isNumber(card.toughestOpponent.losses))) &&
+      (card.bestWin === null || (isObject(card.bestWin) && typeof card.bestWin.opponent === 'string' && typeof card.bestWin.score === 'string' && isNumber(card.bestWin.margin))) &&
+      Array.isArray(card.badges) && card.badges.every((badge: unknown) => typeof badge === 'string'))));
 }
 
 export async function decodeResultsSummary(payload: string): Promise<ResultsSummary> {

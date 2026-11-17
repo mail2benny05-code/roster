@@ -589,6 +589,23 @@ describe('validateSetup', () => {
 });
 
 describe('generateRoster – fixed partners', () => {
+  it('rotates four fixed teams across two courts and both team sides', async () => {
+    const { generateRoster } = await import('./rosterGenerator');
+    const players = makePlayers(8);
+    const roster = generateRoster(players, 2, 12, 'fixed', 'Court rotation');
+    for (let i = 0; i < players.length; i += 2) {
+      const courtCounts = [0, 0];
+      const sideCounts = [0, 0];
+      for (const round of roster.rounds) {
+        const court = round.courts.find(game => [...game.team1, ...game.team2].some(player => player.id === players[i].id))!;
+        courtCounts[court.courtNumber - 1]++;
+        sideCounts[court.team1.some(player => player.id === players[i].id) ? 0 : 1]++;
+      }
+      expect(Math.abs(courtCounts[0] - courtCounts[1])).toBeLessThanOrEqual(1);
+      expect(Math.abs(sideCounts[0] - sideCounts[1])).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('keeps entry-order partners together in games and sit-outs', async () => {
     const { generateRoster } = await import('./rosterGenerator');
     const players = makePlayers(6);

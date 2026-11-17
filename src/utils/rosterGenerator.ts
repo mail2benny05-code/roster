@@ -1549,6 +1549,62 @@ function rotationSignature(rounds: Round[]): string {
   }));
 }
 
+/** Balance presentation slots without changing fixed-team matchups. */
+function balanceFixedCourtSlots(rounds: Round[], previousRounds: Round[], teams: [Player, Player][], numCourts: number): Round[] {
+  const teamId = (team: Player[]) => team.map(player => player.id).sort().join('|');
+  const ids = teams.map(team => teamId(team));
+  const courtCounts = new Map(ids.map(id => [id, Array(numCourts).fill(0) as number[]]));
+  const sideCounts = new Map(ids.map(id => [id, [0, 0]]));
+  const lastCourt = new Map<string, number>();
+  const record = (round: Round) => {
+    for (const court of round.courts) {
+      for (const [side, team] of [court.team1, court.team2].entries()) {
+        const id = teamId(team);
+        courtCounts.get(id)![court.courtNumber - 1]++;
+        sideCounts.get(id)![side]++;
+        lastCourt.set(id, court.courtNumber - 1);
+      }
+    }
+  };
+  previousRounds.forEach(record);
+  return rounds.map(round => {
+    const games = round.courts;
+    const permutations: CourtGame[][] = [];
+    const visit = (chosen: CourtGame[], remaining: CourtGame[]) => {
+      if (!remaining.length) { permutations.push(chosen); return; }
+      for (let i = 0; i < remaining.length; i++) visit([...chosen, remaining[i]], remaining.filter((_, index) => index !== i));
+    };
+    if (games.length <= 6) visit([], games);
+    else permutations.push(games, [...games].reverse());
+    const placementCost = (ordered: CourtGame[]) => ordered.reduce((total, court, index) => {
+      const placement = [court.team1, court.team2].reduce((cost, team) => {
+        const id = teamId(team);
+        const counts = courtCounts.get(id)!;
+        const next = counts[index] + 1;
+        return cost + next * next - counts[index] * counts[index] + (lastCourt.get(id) === index ? 0.25 : 0);
+      }, 0);
+      return total + placement;
+    }, 0);
+    const ordered = permutations.reduce((best, candidate) => placementCost(candidate) < placementCost(best) ? candidate : best);
+    const courts = ordered.map((court, index) => {
+      const first = teamId(court.team1);
+      const second = teamId(court.team2);
+      const sideCost = (flip: boolean) => {
+        const firstSide = flip ? 1 : 0;
+        const secondSide = flip ? 0 : 1;
+        const a = sideCounts.get(first)!;
+        const b = sideCounts.get(second)!;
+        return 2 * a[firstSide] + 2 * b[secondSide];
+      };
+      const flip = sideCost(true) < sideCost(false);
+      return { courtNumber: index + 1, team1: flip ? court.team2 : court.team1, team2: flip ? court.team1 : court.team2 };
+    });
+    const balanced = { ...round, courts };
+    record(balanced);
+    return balanced;
+  });
+}
+
 // ─── Generate roster ──────────────────────────────────────────────────────────
 
 export function generateRoster(
@@ -1658,7 +1714,7 @@ export function generateRoster(
       }
     }
     return {
-      rounds: bestDifferent ?? best,
+      rounds: balanceFixedCourtSlots(bestDifferent ?? best, previousRounds, teams, numCourts),
       rosterType,
       partnerMode,
       allPlayers: players,

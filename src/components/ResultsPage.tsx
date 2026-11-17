@@ -28,10 +28,13 @@ export default function ResultsPage(props: Props) {
   const [shareMessage, setShareMessage] = useState('');
   const [shareUrl, setShareUrl] = useState('');
   const [isSharing, setIsSharing] = useState(false);
+  const [selectedId, setSelectedId] = useState('');
   const shared = props.summary !== undefined;
   const summary = shared ? props.summary : createResultsSummary(props.data, props.scores);
   const { sessionName, rosterType, playedCount, doNotPlayCount, results } = summary;
   const activeStandings = results.standings.filter(standing => standing.played > 0);
+  const selectedStanding = results.standings.find(standing => standing.id === selectedId) ?? results.standings[0];
+  const selectedCard = results.playerCards?.find(card => card.id === selectedStanding?.id);
   const podium = activeStandings.slice(0, 3);
   const dominant = [...activeStandings].sort((a, b) => b.pointDifference - a.pointDifference || b.winPercentage - a.winPercentage || b.wins - a.wins)[0];
   const mostWins = [...activeStandings].sort((a, b) => b.wins - a.wins || b.winPercentage - a.winPercentage || b.pointDifference - a.pointDifference)[0];
@@ -214,26 +217,55 @@ export default function ResultsPage(props: Props) {
             </div>
         </section>
 
-        <section className="mb-8" aria-label={rosterType === 'fixed' ? 'Team cards' : 'Player cards'}>
-          <h2 className="mb-4 text-xl font-bold">{rosterType === 'fixed' ? 'Team cards' : 'Player cards'}</h2>
-          <div className="space-y-3">
-            {results.standings.map(standing => {
-              const card = results.playerCards?.find(item => item.id === standing.id);
-              return (
-                <details key={standing.id} className="rounded-2xl border border-slate-700 bg-slate-800/60 p-4">
-                  <summary className="cursor-pointer text-base font-semibold">{standing.name} <span className="ml-2 text-sm font-normal text-slate-400">{standing.wins}W · {standing.losses}L</span></summary>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                    <div><p className="text-xs uppercase text-slate-400">Best partner</p><p className="mt-1 font-medium">{card?.bestPartner ? `${card.bestPartner.name} · ${card.bestPartner.wins} wins together` : 'No wins with a partner'}</p></div>
-                    <div><p className="text-xs uppercase text-slate-400">Toughest opponent</p><p className="mt-1 font-medium">{card?.toughestOpponent ? `${card.toughestOpponent.name} · ${card.toughestOpponent.losses} losses` : 'No losses'}</p></div>
-                    <div><p className="text-xs uppercase text-slate-400">Best win</p><p className="mt-1 font-medium">{card?.bestWin ? `${card.bestWin.score} vs ${card.bestWin.opponent} · +${card.bestWin.margin}` : 'No wins'}</p></div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2" aria-label="Badges">
-                    {card?.badges.length ? card.badges.map(badge => <span key={badge} className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200">{badge}</span>) : <span className="text-sm text-slate-400">No badges yet</span>}
-                  </div>
-                </details>
-              );
-            })}
+        <section className="mb-8" aria-label={rosterType === 'fixed' ? 'Team summary' : 'Player summary'}>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold">{rosterType === 'fixed' ? 'Team summary' : 'Player summary'}</h2>
+              <p className="mt-1 text-sm text-slate-400">Choose {rosterType === 'fixed' ? 'a team' : 'a player'} to explore their results.</p>
+            </div>
+            <label className="w-full sm:w-72 text-xs font-semibold uppercase tracking-wide text-slate-300">
+              {rosterType === 'fixed' ? 'Select team' : 'Select player'}
+              <select value={selectedStanding?.id ?? ''} onChange={event => setSelectedId(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-slate-600 bg-slate-800 px-3 text-sm font-medium normal-case tracking-normal text-white focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-400/30">
+                {results.standings.map((standing, index) => <option key={standing.id} value={standing.id}>#{index + 1} · {standing.name}</option>)}
+              </select>
+            </label>
           </div>
+          {selectedStanding ? (
+            <article className="overflow-hidden rounded-3xl border border-violet-400/25 bg-gradient-to-br from-violet-900/35 via-slate-800 to-slate-800/80 p-5 sm:p-7">
+              <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+                <div className="flex flex-1 items-center gap-4">
+                  <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-violet-400/15 text-2xl" aria-hidden="true">{rosterType === 'fixed' ? '🤝' : '🏸'}</div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-widest text-violet-300">Rank #{results.standings.findIndex(item => item.id === selectedStanding.id) + 1}</p>
+                    <h3 className="mt-1 break-words text-2xl font-extrabold">{selectedStanding.name}</h3>
+                    <p className="mt-1 text-sm text-slate-300">{selectedStanding.played} game{selectedStanding.played === 1 ? '' : 's'} played</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-5">
+                  <div className="relative flex size-28 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#a78bfa ${selectedStanding.winPercentage}%, #334155 0)` }} role="img" aria-label={`${selectedStanding.winPercentage.toFixed(1)}% win rate`}>
+                    <div className="flex size-20 flex-col items-center justify-center rounded-full bg-slate-800">
+                      <span className="text-xl font-extrabold tabular-nums">{selectedStanding.winPercentage.toFixed(0)}%</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">win rate</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-5 gap-y-2 text-center">
+                    <div><p className="text-2xl font-bold text-emerald-300">{selectedStanding.wins}</p><p className="text-xs text-slate-400">Wins</p></div>
+                    <div><p className="text-2xl font-bold text-rose-300">{selectedStanding.losses}</p><p className="text-xs text-slate-400">Losses</p></div>
+                    <div><p className="text-2xl font-bold text-slate-200">{selectedStanding.draws}</p><p className="text-xs text-slate-400">Draws</p></div>
+                    <div><p className="text-2xl font-bold text-amber-200">{selectedStanding.pointDifference >= 0 ? '+' : ''}{selectedStanding.pointDifference}</p><p className="text-xs text-slate-400">Point diff.</p></div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-6 grid gap-3 border-t border-slate-600/60 pt-5 sm:grid-cols-3">
+                <ProfileDetail icon="🤝" label="Best partner" value={selectedCard?.bestPartner ? `${selectedCard.bestPartner.name} · ${selectedCard.bestPartner.wins} wins together` : 'No wins with a partner'} />
+                <ProfileDetail icon="⚔️" label="Toughest opponent" value={selectedCard?.toughestOpponent ? `${selectedCard.toughestOpponent.name} · ${selectedCard.toughestOpponent.losses} losses` : 'No losses'} />
+                <ProfileDetail icon="✨" label="Best win" value={selectedCard?.bestWin ? `${selectedCard.bestWin.score} vs ${selectedCard.bestWin.opponent} · +${selectedCard.bestWin.margin}` : 'No wins'} />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2" aria-label="Badges">
+                {selectedCard?.badges.length ? selectedCard.badges.map(badge => <span key={badge} className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200">{badge}</span>) : <span className="text-sm text-slate-400">No badges yet</span>}
+              </div>
+            </article>
+          ) : <p className="rounded-2xl border border-slate-700 bg-slate-800/60 p-5 text-sm text-slate-400">No players or teams to show.</p>}
         </section>
 
         <section>
@@ -275,4 +307,8 @@ function HighlightCard({ icon, title, value, detail }: { icon: string; title: st
       <p className="mt-1 text-sm leading-relaxed text-slate-400">{detail}</p>
     </article>
   );
+}
+
+function ProfileDetail({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return <div className="rounded-2xl bg-slate-900/50 p-4"><p className="text-xs font-bold uppercase tracking-wide text-violet-300"><span aria-hidden="true">{icon} </span>{label}</p><p className="mt-2 break-words text-sm font-medium text-white">{value}</p></div>;
 }
